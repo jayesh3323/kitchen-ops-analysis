@@ -542,8 +542,12 @@ async function autoDetectTimestamp() {
         } else {
             formData.append('video_path', state.videoPath);
         }
+        // Only send rotation_angle if the user explicitly set it; server uses agent default otherwise.
         const rotInput = $('#adv-rotation');
-        formData.append('rotation_angle', rotInput?.value ? parseInt(rotInput.value) : 0);
+        if (rotInput?.value) {
+            formData.append('rotation_angle', parseInt(rotInput.value));
+        }
+        formData.append('agent', state.selectedAgent || 'pork_weighing');
 
         const resp = await fetch('/api/auto-detect-timestamp', { method: 'POST', body: formData });
         if (!resp.ok) throw new Error('Timestamp detection request failed');
@@ -645,12 +649,15 @@ async function runTimestampOCR() {
 
     try {
         const coords = tsSelector.getCoords();
+        const rotInput2 = $('#adv-rotation');
+        const tsRotation = rotInput2?.value ? parseInt(rotInput2.value) : null;
         const resp = await fetch('/api/extract-timestamp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 frame_b64: state.timestampFrameB64,
                 region: [coords.x1, coords.y1, coords.x2, coords.y2],
+                rotation_angle: tsRotation,
             }),
         });
         if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || 'OCR failed'); }

@@ -614,28 +614,39 @@ async def extract_timestamp_endpoint(request: Request):
 
                 x1, y1, x2, y2 = [int(v) for v in region]
                 h, w = img.shape[:2]
-                
+
                 # Clamp coordinates
                 x1, y1 = max(0, x1), max(0, y1)
                 x2, y2 = min(w, x2), min(h, y2)
-                
+
                 if x2 <= x1 or y2 <= y1:
                     raise ValueError(f"Invalid crop region: {x1},{y1} -> {x2},{y2}")
 
                 cropped = img[y1:y2, x1:x2]
-                
-                # Auto-rotate crop back to horizontal if global rotation is active
-                # This fixes OCR when the user selects a vertical timestamp on a rotated video
-                rot = app_config.ROTATION_ANGLE
+
+                # The frame shown to the user was already rotated by `rot` degrees.
+                # The user drew coordinates in that rotated space.
+                # To make the timestamp text horizontal for OCR, apply the inverse rotation.
+                #
+                # Forward rotation → inverse rotation needed on crop:
+                #   0°   → no-op
+                #   90°  CW  → 90° CCW  (ROTATE_90_COUNTERCLOCKWISE)
+                #   180°     → 180°     (ROTATE_180)
+                #   270° CW  → 90°  CW  (ROTATE_90_CLOCKWISE)  [same as 90° CCW of 270°]
+                rot = body.get("rotation_angle")
+                if rot is None:
+                    rot = app_config.ROTATION_ANGLE
+                rot = int(rot)
                 if rot == 270:
-                    cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)  # Inverse of 90 CCW
-                    logger.info("Auto-rotated crop 90deg CW for OCR")
+                    cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
+                    logger.info("Inverse-rotated crop 90° CW (frame was 270° CCW)")
                 elif rot == 90:
-                    cropped = cv2.rotate(cropped, cv2.ROTATE_90_COUNTERCLOCKWISE) # Inverse of 90 CW
-                    logger.info("Auto-rotated crop 90deg CCW for OCR")
+                    cropped = cv2.rotate(cropped, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                    logger.info("Inverse-rotated crop 90° CCW (frame was 90° CW)")
                 elif rot == 180:
                     cropped = cv2.rotate(cropped, cv2.ROTATE_180)
-                    logger.info("Auto-rotated crop 180deg for OCR")
+                    logger.info("Inverse-rotated crop 180° (frame was 180°)")
+                # rot == 0: text already horizontal, no rotation needed
 
                 # Save debug crop
                 debug_path = os.path.join(app_config.UPLOAD_DIR, "debug_timestamp_crop.jpg")
@@ -674,7 +685,8 @@ async def extract_timestamp_endpoint(request: Request):
 async def auto_detect_timestamp_endpoint(
     video_file: Optional[UploadFile] = File(None),
     video_path: Optional[str] = Form(None),
-    rotation_angle: int = Form(0),
+    rotation_angle: Optional[int] = Form(None),
+    agent: Optional[str] = Form(None),
 ):
     """
     Auto-detect and OCR the timestamp from the bottom-left corner of an early video frame.
@@ -703,6 +715,13 @@ async def auto_detect_timestamp_endpoint(
             target_path = video_path
         else:
             raise HTTPException(status_code=400, detail="Provide a video file or path")
+
+        # If caller didn't supply a rotation, use the agent's own default.
+        agent_name = agent or "pork_weighing"
+        if rotation_angle is None:
+            ad = app_config.get_agent_defaults(agent_name)
+            rotation_angle = int(ad.get("AGENT_ROTATION_ANGLE", app_config.ROTATION_ANGLE))
+            logger.info(f"rotation_angle not supplied — using agent default: {rotation_angle}°")
 
         # ── Extract an early frame (5% into video) ────────────────────────────
         cap = cv2.VideoCapture(target_path)
