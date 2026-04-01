@@ -790,19 +790,12 @@ class PorkWeighingPipeline:
 
         return frame[cy1:cy2, cx1:cx2]  # noqa: use cx1/cx2/cy1/cy2 defined above
 
-    _MAX_UPSCALED_LONG_EDGE = 1920  # cap to avoid OOM on large ROIs
-
     def upscale_frame(self, frame: np.ndarray) -> np.ndarray:
         """Upscale frame by the configured upscale factor and optionally resize to target resolution."""
         if self.config.image_upscale_factor > 1.0:
             height, width = frame.shape[:2]
             new_width = int(width * self.config.image_upscale_factor)
             new_height = int(height * self.config.image_upscale_factor)
-            long_edge = max(new_width, new_height)
-            if long_edge > self._MAX_UPSCALED_LONG_EDGE:
-                scale = self._MAX_UPSCALED_LONG_EDGE / long_edge
-                new_width = int(new_width * scale)
-                new_height = int(new_height * scale)
             frame = cv2.resize(frame, (new_width, new_height), interpolation=self._interpolation_flag)
 
         if self._target_size is not None:
