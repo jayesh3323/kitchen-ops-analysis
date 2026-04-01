@@ -191,6 +191,24 @@ def run_pipeline_headless(
         pipeline.roi = roi_coords
         logger.info(f"Using provided ROI: {roi_coords}")
 
+    # For pork_weighing: auto-detect rotation when the user hasn't explicitly set one
+    if agent == "pork_weighing" and hasattr(pipeline, "detect_rotation"):
+        user_set_rotation = "rotation_angle" in job_config
+        if not user_set_rotation:
+            try:
+                from openai import OpenAI
+                report("processing", "Detecting scale orientation...")
+                _detect_client = OpenAI(api_key=app_config.OPENAI_API_KEY)
+                detected_angle = pipeline.detect_rotation(_detect_client)
+                if detected_angle != pipeline.config.rotation_angle:
+                    logger.info(
+                        f"Auto-rotation: switching {pipeline.config.rotation_angle}° → {detected_angle}°"
+                    )
+                    pipeline.config.rotation_angle = detected_angle
+                report("processing", f"Scale orientation detected: {detected_angle}°")
+            except Exception as _rot_err:
+                logger.warning(f"Auto-rotation detection failed (non-fatal): {_rot_err}")
+
     # For pork_weighing: save CLAHE-enhanced preview frames before Phase 1
     if agent == "pork_weighing" and hasattr(pipeline, "save_clahe_preview_frames"):
         try:

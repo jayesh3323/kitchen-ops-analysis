@@ -660,6 +660,114 @@ class PorkWeighingPipeline:
             logger.warning(f"Invalid rotation angle: {self.config.rotation_angle}. Using 0 degrees.")
             return frame
 
+    # -------------------------------------------------------------------------
+    # Automatic rotation detection
+    # -------------------------------------------------------------------------
+
+    _ROTATION_DETECT_PROMPT = (
+        "You are inspecting a single CCTV frame from a kitchen weighing station. "
+        "A digital weighing scale display is somewhere in the image. "
+        "Is the scale display oriented UPRIGHT and READABLE (digits horizontal, "
+        "top of digits pointing upward)? "
+        "Reply with a JSON object only, no markdown, no extra text: "
+        '{"upright": true} or {"upright": false}'
+    )
+
+    def detect_rotation(self, client: "OpenAI") -> int:  # noqa: F821
+        """Probe candidate rotation angles and return the one that places the
+        scale display upright, as judged by GPT-4o-mini.
+
+        Tries angles in the order [270, 0, 90, 180] (270 is the most common
+        orientation for this camera setup). Stops at the first angle that
+        receives {"upright": true}.  Falls back to 270 if none passes or if
+        the video cannot be read.
+
+        Returns the detected rotation angle (int).
+        """
+        _PROBE_CANDIDATES = [270, 0, 90, 180]
+        _PROBE_FRAME_INDICES = [5, 15, 30]   # sample a few frames for robustness
+        _ROTATE_MAP = {
+            0:   lambda f: f,
+            90:  lambda f: cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE),
+            180: lambda f: cv2.rotate(f, cv2.ROTATE_180),
+            270: lambda f: cv2.rotate(f, cv2.ROTATE_90_COUNTERCLOCKWISE),
+        }
+
+        logger.info("Auto-detecting rotation angle for scale display...")
+
+        cap = cv2.VideoCapture(self.config.input_video_path)
+        if not cap.isOpened():
+            logger.warning("detect_rotation: cannot open video — keeping current angle")
+            return self.config.rotation_angle
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # Clamp probe indices to actual video length
+        probe_indices = [min(idx, total_frames - 1) for idx in _PROBE_FRAME_INDICES if idx < total_frames]
+        if not probe_indices:
+            probe_indices = [0]
+
+        # Read the probe frames once (raw, unrotated)
+        raw_frames: List[np.ndarray] = []
+        for idx in probe_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                raw_frames.append(frame)
+        cap.release()
+
+        if not raw_frames:
+            logger.warning("detect_rotation: no frames extracted — keeping current angle")
+            return self.config.rotation_angle
+
+        # Use first probe frame only (cheapest — one API call per candidate angle)
+        probe_frame = raw_frames[0]
+
+        for angle in _PROBE_CANDIDATES:
+            rotated = _ROTATE_MAP[angle](probe_frame)
+
+            # Downscale to 512px long-edge to keep token cost low
+            h, w = rotated.shape[:2]
+            long_edge = max(h, w)
+            if long_edge > 512:
+                scale = 512 / long_edge
+                rotated = cv2.resize(rotated, (int(w * scale), int(h * scale)),
+                                     interpolation=cv2.INTER_AREA)
+
+            # Encode to JPEG base64
+            ok, buf = cv2.imencode(".jpg", rotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                continue
+            b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+
+            try:
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=20,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url",
+                             "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}},
+                            {"type": "text", "text": self._ROTATION_DETECT_PROMPT},
+                        ],
+                    }],
+                )
+                raw = resp.choices[0].message.content.strip()
+                # Strip markdown fences if model adds them
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1].lstrip("json").strip()
+                result = json.loads(raw)
+                if result.get("upright") is True:
+                    logger.info(f"detect_rotation: angle {angle}° confirmed upright by model")
+                    return angle
+                else:
+                    logger.info(f"detect_rotation: angle {angle}° → not upright, trying next")
+            except Exception as exc:
+                logger.warning(f"detect_rotation: model call failed for {angle}°: {exc}")
+
+        logger.warning("detect_rotation: no angle confirmed upright — defaulting to 270°")
+        return 270
+
     def crop_frame(self, frame: np.ndarray) -> np.ndarray:
         """Crop frame so the ROI occupies 1/3 of the resulting image in each dimension.
 
