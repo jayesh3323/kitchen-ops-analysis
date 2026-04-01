@@ -75,7 +75,7 @@ AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
 AGENT_FPS                     = 1.0
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
-AGENT_MAX_BATCH_SIZE_MB       = 30.0
+AGENT_MAX_BATCH_SIZE_MB       = 35.0
 AGENT_CLIP_BUFFER_SECONDS     = 2
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
@@ -819,8 +819,7 @@ class PorkWeighingPipeline:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
-            enhanced = self.apply_clahe(cropped)
-            return self.upscale_frame(enhanced)
+            return self.upscale_frame(cropped)
         else:
             return self.draw_roi_box(frame)
 
