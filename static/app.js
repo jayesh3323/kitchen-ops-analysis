@@ -772,10 +772,13 @@ async function autoDetectROI() {
         } else {
             formData.append('video_path', state.videoPath);
         }
-        // Pass current rotation if set in advanced config
+        // Only send rotation_angle if the user explicitly set it in advanced config.
+        // When omitted, the server uses the agent's own default rotation so ROI
+        // coordinates are always detected on the same orientation the pipeline uses.
         const rotInput = $('#adv-rotation');
-        const rotation = rotInput?.value ? parseInt(rotInput.value) : 0;
-        formData.append('rotation_angle', rotation);
+        if (rotInput?.value) {
+            formData.append('rotation_angle', parseInt(rotInput.value));
+        }
         // Pass the active agent so the VLM prompt is task-specific
         formData.append('agent', state.selectedAgent || 'pork_weighing');
 
@@ -1490,7 +1493,7 @@ function renderTimeSeries(chartData) {
     state.activeCharts['chart-timeseries'] = new Chart(canvas, {
         type: 'bar',
         data: { labels: chartData.map(d => d.time), datasets: [{ label: 'Weight (g)', data: chartData.map(d => d.weight), backgroundColor: 'rgba(139,92,246,0.6)', borderColor: 'rgba(139,92,246,1)', borderWidth: 1, borderRadius: 4 }] },
-        options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'Time', color: '#94a3b8' }, ticks: { color: '#94a3b8', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { title: { display: true, text: 'Weight (g)', color: '#94a3b8' }, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: false } } }
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'Time', color: '#94a3b8' }, ticks: { color: '#94a3b8', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { title: { display: true, text: 'Weight (g)', color: '#94a3b8' }, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: false, min: 50, max: 130 } } }
     });
 }
 

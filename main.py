@@ -779,7 +779,7 @@ async def auto_detect_timestamp_endpoint(
 async def auto_detect_roi_endpoint(
     video_file: Optional[UploadFile] = File(None),
     video_path: Optional[str] = Form(None),
-    rotation_angle: int = Form(0),
+    rotation_angle: Optional[int] = Form(None),
     agent: Optional[str] = Form(None),
 ):
     """
@@ -812,6 +812,14 @@ async def auto_detect_roi_endpoint(
 
         agent_name = agent or "pork_weighing"
         kb_dir = getattr(app_config, "ROI_KB_DIR", None)
+
+        # If caller didn't supply a rotation, use the agent's own default so that
+        # ROI coordinates are always detected on the same orientation the pipeline
+        # will use when processing analysis frames.
+        if rotation_angle is None:
+            ad = app_config.get_agent_defaults(agent_name)
+            rotation_angle = int(ad.get("AGENT_ROTATION_ANGLE", app_config.ROTATION_ANGLE))
+            logger.info(f"rotation_angle not supplied — using agent default: {rotation_angle}°")
 
         logger.info(
             f"Auto-detecting ROI for agent='{agent_name}': {target_path}, "
