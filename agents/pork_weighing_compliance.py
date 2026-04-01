@@ -765,30 +765,12 @@ class PorkWeighingPipeline:
         return 270
 
     def crop_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Crop frame so the ROI occupies 1/3 of the resulting image in each dimension.
-
-        The crop is centred on the bounding box.  At the 1/3 rule the crop
-        window is 3× the bbox width and 3× the bbox height, so the bbox
-        covers exactly 1/3 of the crop width and 1/3 of the crop height,
-        giving meaningful surrounding context without blurring small bboxes.
-        """
+        """Crop frame to ROI."""
         if self.roi is None:
             return frame
 
-        h, w = frame.shape[:2]
         x1, y1, x2, y2 = self.roi
-        bw = x2 - x1
-        bh = y2 - y1
-
-        # Crop window: bbox must occupy 1/3 of crop in each dimension.
-        # The right edge is expanded extra (1.5× vs 0.5×) because scale digital
-        # display panels typically sit to the right of the weighing platform.
-        cx1 = max(0, x1 - bw // 2)          # left:   +0.5× bbox width
-        cx2 = min(w, x2 + bw // 2)          # right:  +0.5× bbox width
-        cy1 = max(0, y1 - bh)               # top:    +1× bbox height
-        cy2 = min(h, y2 + bh)
-
-        return frame[cy1:cy2, cx1:cx2]  # noqa: use cx1/cx2/cy1/cy2 defined above
+        return frame[y1:y2, x1:x2]
 
     # Agent uses a padded crop (wider than the tight ROI in final.py), so the
     # upscaled result can exceed available memory. Cap the long edge to 1280px —
