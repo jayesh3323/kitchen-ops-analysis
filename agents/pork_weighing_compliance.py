@@ -86,7 +86,7 @@ AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
 AGENT_IMAGE_INTERPOLATION     = "CUBIC"
 AGENT_ENABLE_CROPPING         = True
-AGENT_ROTATION_ANGLE          = 0
+AGENT_ROTATION_ANGLE          = 270
 
 # ============================================================================
 # ⚙️ RUNTIME CONFIGURATION (env vars can override agent defaults above)
