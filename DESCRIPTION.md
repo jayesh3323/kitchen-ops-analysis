@@ -7,9 +7,7 @@ This is a **web-based AI video analysis platform** designed for kitchen operatio
 The application wraps existing standalone Python analysis scripts into a server-hosted job queue system, making them accessible without requiring any command-line knowledge.
 
 ---
-
 ## What We Are Building
-
 ### Core Concept
 
 The webapp serves as a **headless orchestration layer** over multiple video analysis "agents". Each agent targets a specific kitchen KPI:
