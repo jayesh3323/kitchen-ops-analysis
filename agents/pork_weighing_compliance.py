@@ -790,12 +790,23 @@ class PorkWeighingPipeline:
 
         return frame[cy1:cy2, cx1:cx2]  # noqa: use cx1/cx2/cy1/cy2 defined above
 
+    # Agent uses a padded crop (wider than the tight ROI in final.py), so the
+    # upscaled result can exceed available memory. Cap the long edge to 1280px —
+    # equivalent to what final.py produces from a typical tight ROI after 2×
+    # upscale — to keep frame sizes consistent between the two implementations.
+    _MAX_UPSCALED_LONG_EDGE = 1280
+
     def upscale_frame(self, frame: np.ndarray) -> np.ndarray:
         """Upscale frame by the configured upscale factor and optionally resize to target resolution."""
         if self.config.image_upscale_factor > 1.0:
             height, width = frame.shape[:2]
             new_width = int(width * self.config.image_upscale_factor)
             new_height = int(height * self.config.image_upscale_factor)
+            long_edge = max(new_width, new_height)
+            if long_edge > self._MAX_UPSCALED_LONG_EDGE:
+                scale = self._MAX_UPSCALED_LONG_EDGE / long_edge
+                new_width = int(new_width * scale)
+                new_height = int(new_height * scale)
             frame = cv2.resize(frame, (new_width, new_height), interpolation=self._interpolation_flag)
 
         if self._target_size is not None:
