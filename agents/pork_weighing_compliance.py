@@ -881,18 +881,14 @@ class PorkWeighingPipeline:
         logger.info(f"Saved {saved} CLAHE preview frames to {out_dir}")
 
     def _compress_frame(self, frame: np.ndarray, format_override: Optional[str] = None) -> str:
-        """Compress frame and convert to base64 using configured format (PNG or JPEG).
-
-        PNG compression level 1 (vs 9) cuts per-frame encoding time by ~10×
-        at the cost of ~20% larger files — acceptable since frames go straight
-        to an API and are not stored long-term.
-        """
+        """Compress frame and convert to base64 using configured format (PNG or JPEG)."""
         image_format = format_override.upper() if format_override else self.config.image_format
 
         if image_format == "PNG":
-            _, buf = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+            _, buf = cv2.imencode(".png", frame)
         else:
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, IMAGE_QUALITY])
+            quality = getattr(self.config, 'image_quality', IMAGE_QUALITY)
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
 
         return base64.b64encode(bytes(buf)).decode("utf-8")
 
