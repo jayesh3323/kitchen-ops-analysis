@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs
+*.log
+server.log
+uvicorn_error.log
+bowl_completion_analysis.log
+noodle_rotation_analysis.log
+plating_analysis.log
+pork_weighing_analysis.log
+service_time_analysis.log
+lf_inspect.log
+
+# Database / local state
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded videos & processing output
+uploads/
+results/
+
+# Secrets / env
+.env
+*.env
+firebase_credentials.json
+service_account*.json
+*_credentials.json
+
+# Misc
+.DS_Store
+Thumbs.db
+upload_output.txt
+debug_timestamp_crop.jpg

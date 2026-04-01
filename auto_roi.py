@@ -1,0 +1,549 @@
+"""
+Automatic ROI detection using a Vision Language Model (VLM).
+
+Samples 3 frames from the video, sends each to Gemini 2.5 Pro with an
+agent-specific prompt (including visual-content cues) that explains what
+region to look for.  Optional KB reference images are prepended as
+few-shot visual context.
+Returns the best bounding box [x1, y1, x2, y2] in full-resolution pixel coords.
+"""
+import base64
+import glob
+import io
+import json
+import logging
+import os
+from typing import List, Optional, Tuple
+
+import cv2
+import numpy as np
+from PIL import Image as PILImage
+
+import config as app_config
+
+logger = logging.getLogger(__name__)
+
+# Fractional positions in the video to sample (10%, 30%, 50%)
+SAMPLE_POSITIONS = [0.10, 0.30, 0.50]
+
+# =============================================================================
+# Agent-specific VLM prompt context
+# =============================================================================
+
+_AGENT_CONTEXT = {
+    "pork_weighing": (
+        "This is a kitchen CCTV recording from a pork processing station or restaurant kitchen. "
+        "Locate ALL weighing scales visible in the frame and return a single bounding box that covers every scale apparatus: "
+        "the platform/tray, any item or bowl currently on it, and the digital readout together as one region. "
+        "Include a generous margin of empty space around the outermost edges of the scale(s) so the full apparatus is never clipped."
+    ),
+    "plating_time": (
+        "This is a kitchen CCTV recording of a ramen or noodle restaurant. "
+        "Locate the table or counter where bowls are being assembled and prepared for service. "
+        "Return a single bounding box that covers the ENTIRE table surface, including all bowls, "
+        "ingredients, and tools on it. Include a generous margin around the table edges."
+    ),
+    "serve_time": (
+        "This is a restaurant CCTV recording, often from a wide-angle or fisheye camera. "
+        "Locate the KITCHEN COUNTER AND COOKING STATION — the long counter behind which chefs in white uniforms work. "
+        "This counter runs the full width of the kitchen and contains cooking equipment (pots, woks, trays), "
+        "ingredient containers, and the shiny grey/silver serving surface where completed ramen bowls are placed "
+        "before being handed to customers. "
+        "Return a single bounding box that covers the ENTIRE counter surface from end to end, "
+        "including all equipment and the serving pass area. "
+        "In fisheye views the counter may appear as a diagonal band — the box must span it fully. "
+        "Include a generous margin around the counter edges."
+    ),
+    "noodle_rotation": (
+        "This is a kitchen CCTV recording. "
+        "Locate the noodle cooking station — around a pot, wok, or noodle basket — "
+        "and return its bounding box. Include a generous margin around the station."
+    ),
+    "bowl_completion_rate": (
+        "This is a restaurant CCTV recording, typically from a side or end-of-counter camera angle. "
+        "Locate the KITCHEN PREP AND PLATING COUNTER — the section of counter where ramen bowls are assembled "
+        "and finalized before service. This area faces the customer seating and contains stacked or active "
+        "light blue/teal ramen bowls, cooking and plating equipment, and the serving surface. "
+        "Return a single bounding box that covers this kitchen counter section only. "
+        "Do NOT include the customer seating area in front of the counter — focus exclusively on the "
+        "kitchen prep side. Include a generous margin around the counter edges."
+    ),
+}
+
+# Visual content description for what should be SEEN inside the target ROI box.
+# Used in the VLM prompt and in the KB few-shot introduction.
+_AGENT_VISUAL_CUES = {
+    "pork_weighing": (
+        "The target region must contain ALL weighing scales visible in the frame as one bounding box. "
+        "For each scale, include: the platform/tray where items are placed, any bowl or item on it, "
+        "AND the digital readout panel that displays the weight. "
+        "IMPORTANT: the digital display panel is often mounted to the SIDE or BACK of the platform — "
+        "it may appear as a small rectangular LCD to the right of or behind the platform. "
+        "The bbox MUST extend far enough to include every display panel. "
+        "Add a clear margin of empty space on all sides around the outermost scale edges — "
+        "do NOT crop tight to the scale body."
+    ),
+    "plating_time": (
+        "Inside the target box you will see the full plating table surface: ramen or noodle bowls "
+        "being assembled, ingredients being added, and staff hands working over the bowls. "
+        "The entire table — from edge to edge — must be enclosed, not just the active bowl."
+    ),
+    "serve_time": (
+        "Inside the target box you will see the full kitchen cooking and serving counter: "
+        "chefs in white uniforms working over pots, woks, and trays; the entire counter surface "
+        "from left edge to right edge (it may appear as a wide diagonal band in fisheye views); "
+        "cooking equipment and ingredient containers on the counter; and the shiny grey/silver "
+        "serving surface where completed ramen bowls are placed before pickup. "
+        "The box must span the counter end-to-end — do NOT crop to just one chef or one section."
+    ),
+    "noodle_rotation": (
+        "Inside the target box you will see the noodle cooking station: a pot, wok, or "
+        "noodle basket with hot water or steam, and utensils or hands handling noodles."
+    ),
+    "bowl_completion_rate": (
+        "Inside the target box you will see the kitchen plating and prep counter only: "
+        "stacked or active light blue/teal ramen bowls being assembled or awaiting service; "
+        "the prep counter surface with cooking and plating equipment; and the serving pass area "
+        "immediately adjacent. The distinctive light blue bowls are a key visual anchor. "
+        "The customer seating area in FRONT of the counter must NOT be inside the box — "
+        "exclude any customers, dining chairs, or floor space."
+    ),
+}
+
+# Per-agent bbox expansion margin (fraction of the detected bbox's own width/height).
+# Larger value → more context added around the detected region.
+# Small objects (scale) need large expansion; wide areas (counter) need smaller.
+_AGENT_MARGIN = {
+    "pork_weighing":  0.8,   # scale is small — expand generously to include display + platform
+    "plating_time":   0,     # plating table is large — 0 margin to avoid spilling off-frame
+    "serve_time":     0,     # seating area spans wide — 0 margin to keep focus on counter
+    "noodle_rotation": 0.4,
+    "bowl_completion_rate": 0, # covers two zones already — 0 margin to exclude customer area
+}
+_DEFAULT_MARGIN = 0.3
+
+_DEFAULT_CONTEXT = (
+    "This is a kitchen or restaurant CCTV recording. "
+    "Identify the primary operational region relevant to food preparation or service activity."
+)
+
+_DEFAULT_VISUAL_CUE = (
+    "Inside the target box you will see the main area of food preparation or service activity "
+    "that is most relevant to the task being performed."
+)
+
+_VLM_PROMPT_TEMPLATE = (
+    "{agent_context}\n\n"
+    "Visual content that MUST be inside the bounding box:\n"
+    "{visual_cue}\n\n"
+    "Draw a box that fully encloses ALL the visual elements described above, with a generous margin of empty space on every side around the scale(s). Do NOT draw the tightest possible box — leave clear padding beyond the scale edges.\n"
+    "A box covering less than 2% of the total image area is almost certainly wrong.\n\n"
+    "Return ONLY a JSON object using NORMALIZED coordinates (fractions between 0.0 and 1.0,\n"
+    "where 0.0 = left/top edge and 1.0 = right/bottom edge of the image).\n"
+    "Do NOT return pixel values — return fractions of image width and height.\n\n"
+    "MARGIN RULE:\n"
+    "- If THE AGENT is 'pork_weighing', leave a GENEROUS margin (clear padding) around the scale edges.\n"
+    "- If THE AGENT is 'plating_time', 'serve_time', or 'bowl_completion_rate', draw a TIGHT precision box \n"
+    "  that covers the counter/table surface exactly without excessive empty space.\n\n"
+    '{{"found": true, "x1": <0.0–1.0>, "y1": <0.0–1.0>, "x2": <0.0–1.0>, "y2": <0.0–1.0>, "confidence": <0.0–1.0>, "reasoning": "<one sentence>"}}\n\n'
+    "If the relevant region is not visible in this frame, return:\n"
+    '{{"found": false, "confidence": 0.0, "reasoning": "<why not found>"}}\n\n'
+    "Coordinate rules:\n"
+    "- All values must be between 0.0 and 1.0\n"
+    "- x2 > x1, y2 > y1\n"
+    "- (x2-x1)*(y2-y1) must be at least 0.02 (box must cover at least 2% of the image)"
+)
+
+
+# =============================================================================
+# Frame extraction helper
+# =============================================================================
+
+def _extract_frame_numpy(
+    video_path: str,
+    position_frac: float,
+    rotation_angle: int = 0,
+) -> Optional[np.ndarray]:
+    """Extract a single frame at `position_frac` (0.0–1.0) of the video duration."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.warning(f"Cannot open video: {video_path}")
+        return None
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total <= 0:
+            return None
+        target = max(0, min(int(total * position_frac), total - 1))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            return None
+
+        if rotation_angle == 90:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        elif rotation_angle == 180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        elif rotation_angle == 270:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+        return frame
+    finally:
+        cap.release()
+
+
+def _frame_to_base64(frame: np.ndarray) -> Tuple[str, int, int]:
+    """Encode a numpy frame to base64 JPEG. Returns (b64_str, width, height)."""
+    h, w = frame.shape[:2]
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+    return b64, w, h
+
+
+# =============================================================================
+# VLM detection
+# =============================================================================
+
+# =============================================================================
+# Knowledge-base loader (folder-based)
+# =============================================================================
+
+def _load_kb_from_folder(agent: str, kb_dir: str) -> List[str]:
+    """
+    Load reference images for `agent` from `kb_dir/{agent}/`.
+    Returns a list of base64-encoded JPEG/PNG strings (up to 3 images).
+    Images may be plain frames or annotated frames (with a rectangle drawn).
+    """
+    # Try raw name first
+    agent_dir = os.path.join(kb_dir, agent)
+    if not os.path.isdir(agent_dir):
+        # Handle common aliases before fallback
+        _KB_ALIASES = {
+            "bowl_completion": "bowl_completion_rate",
+            "avg_serve_time": "serve_time"
+        }
+        agent_dir = os.path.join(kb_dir, _KB_ALIASES.get(agent, agent))
+    
+    if not os.path.isdir(agent_dir):
+        # Fall back to canonical module name if available
+        return []
+
+    paths: List[str] = []
+    for pattern in ("*.jpg", "*.jpeg", "*.png"):
+        paths.extend(glob.glob(os.path.join(agent_dir, pattern)))
+    paths = sorted(paths)[:3]  # deterministic order, max 3
+
+    examples: List[str] = []
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                examples.append(base64.b64encode(f.read()).decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"Could not load KB image {p}: {e}")
+    return examples
+
+
+def _b64_to_pil(b64_str: str) -> PILImage.Image:
+    """Decode a base64-encoded image string to a PIL Image."""
+    return PILImage.open(io.BytesIO(base64.b64decode(b64_str)))
+
+
+def detect_roi_vlm(
+    frame_base64: str,
+    image_width: int,
+    image_height: int,
+    agent: str = "pork_weighing",
+    kb_images: Optional[List[str]] = None,
+) -> Tuple[Optional[Tuple[int, int, int, int]], float]:
+    """
+    Use Gemini 2.5 Pro (or configured AUTO_ROI_VLM_MODEL) to locate the ROI.
+
+    Args:
+        frame_base64:  Base64-encoded JPEG frame.
+        image_width:   Width of the original frame in pixels.
+        image_height:  Height of the original frame in pixels.
+        agent:         Agent name — determines what region to look for.
+        kb_images:     Optional list of base64-encoded reference images loaded
+                       from the KB folder.  Prepended as few-shot visual context.
+
+    Returns:
+        ((x1, y1, x2, y2), confidence) or (None, 0.0) on failure/not-found.
+    """
+    agent_context = _AGENT_CONTEXT.get(agent, _DEFAULT_CONTEXT)
+    visual_cue = _AGENT_VISUAL_CUES.get(agent, _DEFAULT_VISUAL_CUE)
+    prompt = _VLM_PROMPT_TEMPLATE.format(
+        agent_context=agent_context,
+        visual_cue=visual_cue,
+    )
+
+    try:
+        import google.genai as genai
+        client = genai.Client(api_key=app_config.GOOGLE_API_KEY)
+        model = getattr(app_config, "AUTO_ROI_VLM_MODEL", "gemini-2.5-pro")
+
+        # ── Build content list: optional few-shot KB images + query image ─────
+        # Gemini accepts a flat list of strings (text) and PIL Images interleaved.
+        contents = []
+
+        if kb_images:
+            contents.append(
+                f"I will show you {len(kb_images)} reference image(s) with a green rectangle drawn over the correct target region.\n\n"
+                f"Study what is INSIDE the green rectangle in each reference image — "
+                f"that is the visual content you must locate in the new image:\n"
+                f"{visual_cue}\n\n"
+                f"The camera angle or store layout may differ — focus on the content, not the exact position or size shown in the reference. "
+                f"Leave a generous margin of empty space around the target region — do NOT draw the tightest possible box."
+            )
+            for i, b64 in enumerate(kb_images, 1):
+                contents.append(_b64_to_pil(b64))
+            contents.append(
+                "Now locate the same content in this new image and return its bounding box:"
+            )
+
+        contents.append(prompt)
+        contents.append(_b64_to_pil(frame_base64))
+
+        if kb_images:
+            logger.info(f"VLM ROI [{agent}]: using {len(kb_images)} KB reference image(s)")
+
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config={
+                "temperature": 0.0,
+                "response_mime_type": "application/json",
+            },
+        )
+
+        raw = response.text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw)
+
+        if not result.get("found"):
+            logger.info(f"VLM: region not found — {result.get('reasoning', '')}")
+            return None, 0.0
+
+        # Model should return normalized coords (0.0–1.0), but some models
+        # return pixel values despite instructions.  Auto-detect which format
+        # was used: if any value is clearly > 1.5, treat all as pixel coords.
+        raw_x1 = float(result["x1"])
+        raw_y1 = float(result["y1"])
+        raw_x2 = float(result["x2"])
+        raw_y2 = float(result["y2"])
+
+        if max(raw_x1, raw_y1, raw_x2, raw_y2) > 1.5:
+            # Model returned pixel coordinates — normalise them
+            logger.info(
+                f"VLM returned pixel coords ({raw_x1},{raw_y1})->({raw_x2},{raw_y2}); "
+                f"normalising by {image_width}x{image_height}"
+            )
+            nx1 = raw_x1 / image_width
+            ny1 = raw_y1 / image_height
+            nx2 = raw_x2 / image_width
+            ny2 = raw_y2 / image_height
+        else:
+            nx1, ny1, nx2, ny2 = raw_x1, raw_y1, raw_x2, raw_y2
+
+        # Clamp to [0, 1]
+        nx1, nx2 = max(0.0, nx1), min(1.0, nx2)
+        ny1, ny2 = max(0.0, ny1), min(1.0, ny2)
+
+        if nx2 <= nx1 or ny2 <= ny1:
+            logger.warning(f"VLM returned invalid normalized bbox: ({nx1},{ny1})->({nx2},{ny2})")
+            return None, 0.0
+
+        norm_area = (nx2 - nx1) * (ny2 - ny1)
+        if norm_area < 0.02:
+            logger.warning(
+                f"VLM bbox too small: covers {norm_area*100:.1f}% of image "
+                f"(normalized: ({nx1:.3f},{ny1:.3f})->({nx2:.3f},{ny2:.3f})) — discarding"
+            )
+            return None, 0.0
+
+        # Convert to pixel coordinates
+        x1 = int(nx1 * image_width)
+        y1 = int(ny1 * image_height)
+        x2 = int(nx2 * image_width)
+        y2 = int(ny2 * image_height)
+
+        confidence = float(result.get("confidence", 0.7))
+        logger.info(
+            f"VLM ROI [{agent}]: normalized ({nx1:.3f},{ny1:.3f})->({nx2:.3f},{ny2:.3f}) "
+            f"→ pixels ({x1},{y1})->({x2},{y2}) | area={norm_area*100:.1f}% | "
+            f"conf={confidence:.2f} | {result.get('reasoning', '')}"
+        )
+        return (x1, y1, x2, y2), confidence
+
+    except Exception as e:
+        logger.error(f"VLM ROI detection failed: {type(e).__name__}: {e}", exc_info=True)
+        return None, 0.0
+
+
+# =============================================================================
+# Annotation helper
+# =============================================================================
+
+def _draw_roi_annotation(
+    frame: np.ndarray,
+    bbox: Tuple[int, int, int, int],
+    confidence: float,
+) -> bytes:
+    """Draw the detected ROI rectangle on the frame and return JPEG bytes."""
+    annotated = frame.copy()
+    x1, y1, x2, y2 = bbox
+
+    # Colour by confidence: green ≥70%, amber 40–70%, red <40%
+    if confidence >= 0.70:
+        color = (0, 200, 100)
+    elif confidence >= 0.40:
+        color = (0, 165, 255)
+    else:
+        color = (50, 50, 220)
+
+    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
+
+    label = f"AI {int(confidence * 100)}%"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.5, min(1.0, frame.shape[1] / 1280))
+    thickness = 2
+    (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+
+    pad = 4
+    # Keep label inside frame if the box is near the top
+    label_y_top = max(th + baseline + pad * 2, y1)
+    cv2.rectangle(
+        annotated,
+        (x1, label_y_top - th - baseline - pad * 2),
+        (x1 + tw + pad * 2, label_y_top),
+        color,
+        -1,
+    )
+    cv2.putText(
+        annotated,
+        label,
+        (x1 + pad, label_y_top - baseline - pad),
+        font,
+        font_scale,
+        (0, 0, 0),
+        thickness,
+    )
+
+    _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return buf.tobytes()
+
+
+# =============================================================================
+# Main orchestrator
+# =============================================================================
+
+def auto_detect_roi(
+    video_path: str,
+    rotation_angle: int = 0,
+    agent: str = "pork_weighing",
+    kb_dir: Optional[str] = None,
+) -> dict:
+    """
+    Sample 3 frames from the video and ask the VLM to locate the ROI in each.
+    Returns the result with the highest confidence.
+
+    Args:
+        video_path:     Path to the video file.
+        rotation_angle: Rotation to apply before analysis (0/90/180/270).
+        agent:          Agent name — drives what the VLM is told to look for.
+        kb_dir:         Path to the root KB folder.  If provided, images from
+                        `kb_dir/{agent}/` are passed as few-shot reference images.
+
+    Returns:
+        {
+            "roi": [x1, y1, x2, y2] or None,
+            "confidence": float,
+            "method": "vlm" | "failed",
+            "annotated_frame": bytes (JPEG) or None,
+            "frame_w": int,
+            "frame_h": int,
+        }
+    """
+    # ── Normalize agent name ──────────────────────────────────────────────────
+    _ALIASES = {
+        "avg_serve_time": "serve_time",
+        "bowl_completion": "bowl_completion_rate",
+    }
+    agent = _ALIASES.get(agent, agent)
+
+    _failed = {
+        "roi": None, "confidence": 0.0, "method": "failed",
+        "annotated_frame": None, "frame_w": 0, "frame_h": 0,
+    }
+
+    try:
+        # ── Load KB reference images for this agent ───────────────────────────
+        kb_images: Optional[List[str]] = None
+        if kb_dir:
+            kb_images = _load_kb_from_folder(agent, kb_dir) or None
+
+        # ── Sample frames ─────────────────────────────────────────────────────
+        frames = []
+        for pos in SAMPLE_POSITIONS:
+            frame = _extract_frame_numpy(video_path, pos, rotation_angle)
+            if frame is not None:
+                frames.append(frame)
+
+        if not frames:
+            logger.warning("Could not extract any frames from video")
+            return _failed
+
+        logger.info(
+            f"Auto-detecting ROI for agent='{agent}' across {len(frames)} frames"
+            + (f" with {len(kb_images)} KB reference image(s)" if kb_images else "")
+        )
+
+        # ── Run VLM on each frame, collect results ────────────────────────────
+        results = []  # list of (bbox, confidence, frame, w, h)
+        for i, frame in enumerate(frames):
+            b64, w, h = _frame_to_base64(frame)
+            bbox, conf = detect_roi_vlm(b64, w, h, agent=agent, kb_images=kb_images)
+            if bbox is not None:
+                results.append((bbox, conf, frame, w, h))
+                logger.info(f"Frame {i+1}/{len(frames)}: found ROI conf={conf:.2f}")
+            else:
+                logger.info(f"Frame {i+1}/{len(frames)}: no ROI found")
+
+        if not results:
+            logger.warning(f"VLM found no ROI in any of the {len(frames)} sampled frames")
+            return _failed
+
+        # ── Pick the result with the highest confidence ───────────────────────
+        best_bbox, best_conf, best_frame, best_w, best_h = max(results, key=lambda r: r[1])
+        x1, y1, x2, y2 = best_bbox
+
+        # ── Expand bbox with per-agent margins (fraction of bbox dimension) ───
+        margin = _AGENT_MARGIN.get(agent, _DEFAULT_MARGIN)
+        bw = x2 - x1
+        bh = y2 - y1
+        x1 = max(0,       x1 - int(bw * margin))   # left
+        x2 = min(best_w,  x2 + int(bw * margin))   # right
+        y1 = max(0,       y1 - int(bh * margin))   # top
+        y2 = min(best_h,  y2 + int(bh * margin))   # bottom
+
+        logger.info(
+            f"Best ROI: ({x1},{y1})->({x2},{y2}) conf={best_conf:.2f} "
+            f"(from {len(results)}/{len(frames)} frames that found a region)"
+        )
+
+        annotated_bytes = _draw_roi_annotation(best_frame, best_bbox, best_conf)
+
+        return {
+            "roi": [x1, y1, x2, y2],
+            "confidence": round(best_conf, 3),
+            "method": "vlm",
+            "annotated_frame": annotated_bytes,
+            "frame_w": best_w,
+            "frame_h": best_h,
+        }
+
+    except Exception as e:
+        logger.error(f"auto_detect_roi error: {e}", exc_info=True)
+        return _failed
