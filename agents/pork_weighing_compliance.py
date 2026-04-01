@@ -79,8 +79,8 @@ AGENT_MAX_BATCH_SIZE_MB       = 35.0
 AGENT_CLIP_BUFFER_SECONDS     = 2
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
-AGENT_IMAGE_QUALITY           = 100
-AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
+AGENT_IMAGE_QUALITY           = 90
+AGENT_IMAGE_UPSCALE_FACTOR    = 1.0
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "JPEG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
@@ -218,7 +218,6 @@ IMPORTANT - TIME INTERVALS:
 - The time interval for this event has already been determined in Phase 1 analysis
 - You should focus on VERIFYING the detection and READING accuracy, not on adjusting timestamps
 - The original video timestamps are provided in the context
-- Reject those scale reading values which are very far from the standard weights (60g and 120g) by more than 8g i.e. if the weight is beyond the range (52-68 or 112-128) then reject it.
 
 FRAME ANALYSIS:
 - These frames are CROPPED AND UPSCALED to the ROI bounding box — the scale machine fills most of the image
@@ -226,28 +225,38 @@ FRAME ANALYSIS:
 - Analyze the digital readout directly — it should be clearly visible unless physically obstructed or obscured by glare
 - Confirm the scale number from Phase 1 context (default "1" unless context says otherwise)
 
+STEP 1 — RE-READ THE FINAL SCALE DISPLAY:
+Before anything else, identify the frames toward the END of the clip (just before the pork/bowl is removed from the platform). These represent the stable, settled reading — the most reliable measurement.
+- Carefully re-read every digit on the digital display in those final frames
+- If the display is not visible in the final frames, use the clearest readable frame anywhere in the clip
+- Record this as your `verified_reading`
+
+STEP 2 — RANGE VALIDATION (apply AFTER re-reading):
+Standard pork portion weights are 60g (regular) and 120g (large), tolerance ±8g.
+Valid ranges: 52–68g OR 112–128g.
+- If your re-read value falls OUTSIDE BOTH ranges (i.e. not in 52–68 and not in 112–128), mark `is_valid = false` (FALSE POSITIVE due to out-of-range reading)
+- Exception: if the display was completely unreadable in ALL frames (full obstruction/glare across the entire clip), do NOT apply the range check — instead set `verified_reading = null` and keep `is_valid` based on the pork+removal sequence alone
+
 VERIFICATION CRITERIA:
 1. Confirm that PORK (not other ingredients) is being weighed — pork visible inside the ROI crop is sufficient
-2. Check whether the scale display was visible and readable at any point during the clip (not necessarily in every frame)
-3. Extract and verify the EXACT reading shown on the digital display when it was visible
-4. Confirm the reading was STABLE at any point (not necessarily in the current frame)
-5. Assess the clarity and readability of the best available display frame
-6. Look for the FULL WEIGHING SEQUENCE: pork present in ROI → non-zero scale reading (at any point) → bowl/pork removal — this sequence alone is sufficient to confirm a TRUE POSITIVE
+2. Re-read the final display reading (STEP 1 above) and apply range validation (STEP 2 above)
+3. Look for the FULL WEIGHING SEQUENCE: pork present in ROI → non-zero scale reading → bowl/pork removal
+4. Assess the clarity and readability of the best available display frame
 
 READING VERIFICATION REQUIREMENTS:
-- Re-read the digital display value with maximum precision from the best available frame
+- Re-read the digital display value with maximum precision from the END of the clip (final stable frames)
 - Verify the unit of measurement
 - Check each digit carefully for accuracy
-- Assess if the reading makes sense for pork (typical weight ranges)
-- Reference standard weights are 60g (regular portion) and 120g (large portion). Most bowls should weigh around these values, but verify and report the exact displayed reading even if it deviates from these standards.
+- Report the exact displayed reading in `verified_reading`
 
 CONFIDENCE (be strict): NEVER use 1.0 | 0.8-0.9=HIGH(all digits clear, stable) | 0.6-0.7=MED-HIGH(minor blur) | 0.4-0.5=MED(partial obstruction) | 0.2-0.3=LOW(heavy blur or inferred from Phase 1 with bowl-removal) | 0.0-0.1=UNREADABLE(no readable frame exists)
 
 CRITICAL RULES:
 - AUTOMATIC FALSE POSITIVE if the ingredient is clearly NOT pork (e.g. vegetables, sauce, other non-meat items)
+- AUTOMATIC FALSE POSITIVE if the re-read value is outside 52–68g AND outside 112–128g (see STEP 2)
 - DO NOT mark as false positive solely because the display is not visible in the current frames — the stable reading may have occurred earlier in the clip
-- A TRUE POSITIVE can be confirmed by: (a) pork visible inside ROI + (b) scale showing a non-zero/changed reading at any point + (c) bowl/pork subsequently removed from platform
-- If reading is completely obscured across ALL frames, set confidence below 0.3 but still mark is_valid=true if the pork+removal sequence was observed
+- A TRUE POSITIVE requires: (a) pork visible inside ROI + (b) re-read value within a valid range (52–68 or 112–128) + (c) bowl/pork subsequently removed from platform
+- If reading is completely obscured across ALL frames, do not apply the range check — set confidence below 0.3 and keep is_valid based on pork+removal sequence
 - Provide refined reading if Phase 1 reading appears incorrect
 - Lower confidence if there's any uncertainty about reading accuracy
 - Use the scale number from Phase 1 context (default "1")
