@@ -82,7 +82,7 @@ AGENT_BATCH_OVERLAP_FRAMES    = 2
 AGENT_IMAGE_QUALITY           = 100
 AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
-AGENT_IMAGE_FORMAT            = "PNG"
+AGENT_IMAGE_FORMAT            = "JPEG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
 AGENT_IMAGE_INTERPOLATION     = "CUBIC"
 AGENT_ENABLE_CROPPING         = True
@@ -819,7 +819,9 @@ class PorkWeighingPipeline:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
-            return self.upscale_frame(cropped)
+            enhanced = self.apply_clahe(cropped)
+            return self.upscale_frame(enhanced)
+
         else:
             return self.draw_roi_box(frame)
 
@@ -1088,14 +1090,27 @@ class PorkWeighingPipeline:
                 confidence = det.get("confidence", 0) or 0
                 if confidence >= self.config.confidence_threshold:
                     # Handle None values explicitly (API may return null for missing fields)
-                    start_time = float(det.get("start_time") or 0.0)
-                    end_time = float(det.get("end_time") or 0.0)
+                    raw_start = det.get("start_time")
+                    raw_end = det.get("end_time")
+                    start_time = float(raw_start) if raw_start is not None else 0.0
+                    end_time = float(raw_end) if raw_end is not None else 0.0
                     scale = det.get("scale", "").lower() if det.get("scale") else None
-                    
-                    # Validate timestamp interval
-                    if end_time <= start_time:
-                        logger.warning(f"Skipping invalid detection interval: {start_time:.2f}s - {end_time:.2f}s")
-                        continue
+
+                    # Repair missing/inverted timestamps instead of discarding the detection.
+                    # A typical weighing event lasts ~15 s; use that as a fallback duration.
+                    _DEFAULT_EVENT_DURATION = 15.0
+                    if raw_end is None or end_time <= start_time:
+                        if raw_end is None:
+                            logger.warning(
+                                f"Detection at {start_time:.2f}s has no end_time — "
+                                f"inferring end_time as start + {_DEFAULT_EVENT_DURATION:.0f}s"
+                            )
+                        else:
+                            logger.warning(
+                                f"Detection has inverted interval {start_time:.2f}s - {end_time:.2f}s — "
+                                f"inferring end_time as start + {_DEFAULT_EVENT_DURATION:.0f}s"
+                            )
+                        end_time = start_time + _DEFAULT_EVENT_DURATION
 
                     detections.append(Detection(
                         start_time=start_time,
