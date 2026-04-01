@@ -819,9 +819,8 @@ class PorkWeighingPipeline:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
-            enhanced = self.apply_clahe(cropped)
-            return self.upscale_frame(enhanced)
-
+            upscaled = self.upscale_frame(cropped)
+            return self.apply_clahe(upscaled)
         else:
             return self.draw_roi_box(frame)
 
@@ -857,9 +856,9 @@ class PorkWeighingPipeline:
             timestamp = pos / video_fps if video_fps > 0 else 0
             rotated = self.rotate_frame(frame)
             if self.config.enable_cropping and self.roi:
-                processed = self.apply_clahe(self.crop_frame(rotated))
+                processed = self.apply_clahe(self.upscale_frame(self.crop_frame(rotated)))
             else:
-                processed = self.apply_clahe(rotated)
+                processed = self.apply_clahe(self.upscale_frame(rotated))
             fname = f"frame_{saved + 1:02d}_{timestamp:.1f}s.png"
             cv2.imwrite(os.path.join(out_dir, fname), processed)
             saved += 1
@@ -1098,7 +1097,7 @@ class PorkWeighingPipeline:
 
                     # Repair missing/inverted timestamps instead of discarding the detection.
                     # A typical weighing event lasts ~15 s; use that as a fallback duration.
-                    _DEFAULT_EVENT_DURATION = 15.0
+                    _DEFAULT_EVENT_DURATION = 100.0
                     if raw_end is None or end_time <= start_time:
                         if raw_end is None:
                             logger.warning(
