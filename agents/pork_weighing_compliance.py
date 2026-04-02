@@ -786,10 +786,11 @@ class PorkWeighingPipeline:
         return frame[y1:y2, x1:x2]
 
     # Agent uses a padded crop (wider than the tight ROI in final.py), so the
-    # upscaled result can exceed available memory. Cap the long edge to 1280px —
-    # equivalent to what final.py produces from a typical tight ROI after 2×
-    # upscale — to keep frame sizes consistent between the two implementations.
-    _MAX_UPSCALED_LONG_EDGE = 1280
+    # upscaled result would otherwise be much larger than final.py's frames.
+    # Cap the long edge to 640px — matching final.py's typical tight ROI output
+    # after 2× upscale (~300×200 raw → 600×400 upscaled) — to keep per-frame
+    # PNG sizes and batch counts consistent between the two implementations.
+    _MAX_UPSCALED_LONG_EDGE = 640
 
     def upscale_frame(self, frame: np.ndarray) -> np.ndarray:
         """Upscale frame by the configured upscale factor and optionally resize to target resolution."""
