@@ -104,12 +104,14 @@ def process_single_job(job_id: int):
                     output_dir=output_dir,
                     progress_message="Initializing pipeline...")
 
-        # ── Timestamp OCR ──────────────────────────────────────────────────
-        # Extract recording date and hour from the timestamp region of the video.
+        # ── Timestamp OCR (FIRST — on raw unrotated frame) ─────────────────
+        # Always runs before rotation or ROI detection so coordinate spaces
+        # never conflict. The camera timestamp overlay is horizontal in the
+        # original frame regardless of how the video is rotated for analysis.
         recording_date = job.recording_date
         recording_hour = job.recording_hour
 
-        if (recording_date is None or recording_hour is None) and timestamp_region:
+        if recording_date is None or recording_hour is None:
             _update_job(session, job_id,
                         progress_message="Extracting recording timestamp via OCR...")
             try:
@@ -118,9 +120,7 @@ def process_single_job(job_id: int):
                 import cv2
                 import numpy as np
 
-                # Extract the raw unrotated frame directly from the video.
-                # timestamp_region coordinates are always in the original (0°)
-                # frame space — do NOT apply video rotation before cropping.
+                # Extract the raw unrotated frame — no rotation applied here.
                 cap_ts = cv2.VideoCapture(video_path)
                 raw_frame = None
                 if cap_ts.isOpened():
@@ -130,14 +130,19 @@ def process_single_job(job_id: int):
                     cap_ts.release()
 
                 if raw_frame is not None:
-                    # Crop at 0° coordinates — text is already horizontal, no inverse rotation needed
-                    x1, y1, x2, y2 = timestamp_region
                     h, w = raw_frame.shape[:2]
-                    x1, y1 = max(0, x1), max(0, y1)
-                    x2, y2 = min(w, x2), min(h, y2)
-                    cropped = raw_frame[y1:y2, x1:x2]
+                    if timestamp_region:
+                        # User drew a region on the 0° frame — crop precisely.
+                        x1, y1, x2, y2 = timestamp_region
+                        x1, y1 = max(0, x1), max(0, y1)
+                        x2, y2 = min(w, x2), min(h, y2)
+                        ocr_frame = raw_frame[y1:y2, x1:x2]
+                    else:
+                        # No region selected — use the top band where CCTV
+                        # timestamp overlays typically appear.
+                        ocr_frame = raw_frame[:min(200, h), :]
 
-                    _, buf = cv2.imencode(".jpg", cropped, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    _, buf = cv2.imencode(".jpg", ocr_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
                     frame_b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
 
                     ocr_client = OpenAI(api_key=app_config.OPENAI_API_KEY)
