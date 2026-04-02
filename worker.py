@@ -113,32 +113,29 @@ def process_single_job(job_id: int):
             _update_job(session, job_id,
                         progress_message="Extracting recording timestamp via OCR...")
             try:
-                from pipeline_adapter import extract_frame_for_roi
                 from timestamp_ocr import extract_timestamp_from_frame
                 from openai import OpenAI
                 import cv2
                 import numpy as np
 
-                frame_bytes = extract_frame_for_roi(video_path, frame_index=30)
-                if frame_bytes:
-                    # Crop to the user-selected timestamp region
-                    nparr = np.frombuffer(frame_bytes, np.uint8)
-                    full_frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                # Extract the raw unrotated frame directly from the video.
+                # timestamp_region coordinates are always in the original (0°)
+                # frame space — do NOT apply video rotation before cropping.
+                cap_ts = cv2.VideoCapture(video_path)
+                raw_frame = None
+                if cap_ts.isOpened():
+                    total_ts = int(cap_ts.get(cv2.CAP_PROP_FRAME_COUNT))
+                    cap_ts.set(cv2.CAP_PROP_POS_FRAMES, min(30, max(0, total_ts - 1)))
+                    ret_ts, raw_frame = cap_ts.read()
+                    cap_ts.release()
+
+                if raw_frame is not None:
+                    # Crop at 0° coordinates — text is already horizontal, no inverse rotation needed
                     x1, y1, x2, y2 = timestamp_region
-                    # Clamp to frame bounds
-                    h, w = full_frame.shape[:2]
+                    h, w = raw_frame.shape[:2]
                     x1, y1 = max(0, x1), max(0, y1)
                     x2, y2 = min(w, x2), min(h, y2)
-                    cropped = full_frame[y1:y2, x1:x2]
-
-                    # Inverse rotation for better OCR if video is rotated
-                    rot = app_config.ROTATION_ANGLE
-                    if rot == 270:
-                        cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
-                    elif rot == 90:
-                        cropped = cv2.rotate(cropped, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    elif rot == 180:
-                        cropped = cv2.rotate(cropped, cv2.ROTATE_180)
+                    cropped = raw_frame[y1:y2, x1:x2]
 
                     _, buf = cv2.imencode(".jpg", cropped, [cv2.IMWRITE_JPEG_QUALITY, 95])
                     frame_b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
