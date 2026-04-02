@@ -79,12 +79,12 @@ AGENT_MAX_BATCH_SIZE_MB       = 35.0
 AGENT_CLIP_BUFFER_SECONDS     = 2
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
-AGENT_IMAGE_QUALITY           = 95
+AGENT_IMAGE_QUALITY           = 100
 AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
-AGENT_IMAGE_FORMAT            = "JPEG"
+AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_IMAGE_INTERPOLATION     = "CUBIC"
+AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
 
@@ -587,11 +587,11 @@ class PorkWeighingPipeline:
         logger.info(f"Interpolation: {config.image_interpolation}")
 
         # CLAHE: enhances local contrast on L channel (LAB colorspace)
-        self._clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4))
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
 
         # Unsharp mask strength: result = orig*(1+alpha) - blurred*alpha
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
-        self._sharpen_alpha = 0.5
+        self._sharpen_alpha = 1.0
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -904,12 +904,7 @@ class PorkWeighingPipeline:
     # =========================================================================
 
     def extract_frames(self, video_path: str) -> List[Tuple[float, str]]:
-        """Extract frames from video at specified FPS and convert to base64.
-
-        Uses sequential cap.read() + frame counter instead of cap.set() seeks.
-        Seeking in compressed video (H.264/HEVC) forces keyframe decoding on
-        every call and is the primary cause of slow extraction on long files.
-        """
+        """Extract frames from video at specified FPS and convert to base64."""
         logger.info(f"Extracting frames from {video_path} at {self.config.fps} FPS")
 
         cap = cv2.VideoCapture(video_path)
@@ -926,34 +921,29 @@ class PorkWeighingPipeline:
 
         frames = []
         skip_frames = max(1, int(round(video_fps / self.config.fps)))
-        frame_count = 0
+        frame_indices = range(0, total_frames, skip_frames)
 
-        while True:
+        for frame_idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
-                break
+                continue
 
-            if frame_count % skip_frames == 0:
-                current_time = frame_count / video_fps
-                rotated = self.rotate_frame(frame)
-                prepared = self.prepare_frame_for_analysis(rotated)
-                base64_frame = self._compress_frame(prepared)
-                frames.append((current_time, base64_frame))
+            current_time = frame_idx / video_fps
+            rotated = self.rotate_frame(frame)
+            prepared = self.prepare_frame_for_analysis(rotated)
+            base64_frame = self._compress_frame(prepared)
+            frames.append((current_time, base64_frame))
 
-                if len(frames) % 50 == 0:
-                    logger.info(f"Extracted {len(frames)} frames (timestamp: {current_time:.2f}s)")
-
-            frame_count += 1
+            if len(frames) % 50 == 0:
+                logger.info(f"Extracted {len(frames)} frames (timestamp: {current_time:.2f}s)")
 
         cap.release()
         logger.info(f"Extracted {len(frames)} frames total")
         return frames
 
     def extract_frames_phase2(self, video_path: str) -> List[Tuple[float, str]]:
-        """Extract frames for Phase 2 verification - always uses PNG format for best quality.
-
-        Uses sequential cap.read() + frame counter (same rationale as extract_frames).
-        """
+        """Extract frames for Phase 2 verification - always uses PNG format for best quality."""
         logger.info(f"Extracting Phase 2 frames from {video_path} at {self.config.fps} FPS (using {self.config.phase2_image_format} format)")
 
         cap = cv2.VideoCapture(video_path)
@@ -967,7 +957,8 @@ class PorkWeighingPipeline:
         logger.info(f"Video: {video_fps:.2f} FPS, {total_frames} frames, {duration:.2f}s duration")
 
         frames = []
-        skip_frames = max(1, int(round(video_fps / self.config.fps)))
+        time_interval = 1.0 / self.config.fps
+        next_extract_time = 0.0
         frame_count = 0
 
         while True:
@@ -975,17 +966,18 @@ class PorkWeighingPipeline:
             if not ret:
                 break
 
-            if frame_count % skip_frames == 0:
-                current_time = frame_count / video_fps
+            current_time = frame_count / video_fps
+
+            if current_time >= next_extract_time:
                 rotated = self.rotate_frame(frame)
                 prepared = self.prepare_frame_for_analysis(rotated)
                 base64_frame = self._compress_frame(prepared, format_override=self.config.phase2_image_format)
                 frames.append((current_time, base64_frame))
+                next_extract_time += time_interval
 
             frame_count += 1
 
         cap.release()
-
         logger.info(f"Extracted {len(frames)} Phase 2 frames (PNG format)")
         return frames
 
