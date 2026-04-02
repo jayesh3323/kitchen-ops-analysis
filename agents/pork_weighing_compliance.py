@@ -586,11 +586,11 @@ class PorkWeighingPipeline:
         logger.info(f"Image Format: {config.image_format}")
         logger.info(f"Interpolation: {config.image_interpolation}")
 
-        # Pre-create CLAHE object to avoid repeated allocation in apply_clahe
-        # self._clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4))
+        # CLAHE: enhances local contrast on L channel (LAB colorspace)
+        self._clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4))
 
-        # Unsharp mask strength (alpha): original * (1+alpha) - blurred * alpha
-        # 0.5 = moderate sharpening; increase to 1.0 for stronger effect
+        # Unsharp mask strength: result = orig*(1+alpha) - blurred*alpha
+        # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
         self._sharpen_alpha = 0.5
 
     def cleanup(self):
@@ -820,29 +820,28 @@ class PorkWeighingPipeline:
         return frame_with_box
 
     def apply_clahe(self, frame: np.ndarray) -> np.ndarray:
-        """Enhance frame for OCR legibility.
+        """Enhance frame for OCR legibility: CLAHE then unsharp-mask sharpening.
 
-        Two-step unsharp mask:
-          1. Gaussian blur (3×3, σ=0.5) suppresses H.264 compression block noise
-          2. addWeighted adds back high-frequency detail: result = orig*(1+α) - blurred*α
-        This avoids amplifying CCTV compression artifacts that a plain sharpen kernel would.
-
-        CLAHE (commented out below) had no visible effect on bright LED displays.
+        Comment out either block independently to disable that step.
         """
-        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        # l, a, b = cv2.split(lab)
-        # enhanced_l = self._clahe.apply(l)
-        # enhanced_lab = cv2.merge([enhanced_l, a, b])
-        # return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+        # ── CLAHE: boost local contrast on L channel ──────────────────────────
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        enhanced_l = self._clahe.apply(l)
+        frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
+
+        # ── Unsharp mask: suppress noise then add back clean edges ────────────
         blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
-        return cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
+        frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
+
+        return frame
 
     def prepare_frame_for_analysis(self, frame: np.ndarray) -> np.ndarray:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
             upscaled = self.upscale_frame(cropped)
-            return self.apply_clahe(upscaled)  # applies sharpening (CLAHE commented out)
+            return self.apply_clahe(upscaled)
         else:
             return self.draw_roi_box(frame)
 
