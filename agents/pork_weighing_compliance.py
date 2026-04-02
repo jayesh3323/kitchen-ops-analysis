@@ -589,13 +589,9 @@ class PorkWeighingPipeline:
         # Pre-create CLAHE object to avoid repeated allocation in apply_clahe
         # self._clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4))
 
-        # Sharpening kernel: unsharp-mask style — enhances digit edges for OCR
-        import numpy as _np
-        self._sharpen_kernel = _np.array([
-            [ 0, -1,  0],
-            [-1,  5, -1],
-            [ 0, -1,  0],
-        ], dtype=_np.float32)
+        # Unsharp mask strength (alpha): original * (1+alpha) - blurred * alpha
+        # 0.5 = moderate sharpening; increase to 1.0 for stronger effect
+        self._sharpen_alpha = 0.5
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -824,14 +820,22 @@ class PorkWeighingPipeline:
         return frame_with_box
 
     def apply_clahe(self, frame: np.ndarray) -> np.ndarray:
-        """Apply CLAHE to the L channel (LAB space) to enhance scale display contrast."""
+        """Enhance frame for OCR legibility.
+
+        Two-step unsharp mask:
+          1. Gaussian blur (3×3, σ=0.5) suppresses H.264 compression block noise
+          2. addWeighted adds back high-frequency detail: result = orig*(1+α) - blurred*α
+        This avoids amplifying CCTV compression artifacts that a plain sharpen kernel would.
+
+        CLAHE (commented out below) had no visible effect on bright LED displays.
+        """
         # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         # l, a, b = cv2.split(lab)
-        # # Use the cached CLAHE object instead of creating a new one per frame
         # enhanced_l = self._clahe.apply(l)
         # enhanced_lab = cv2.merge([enhanced_l, a, b])
         # return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-        return cv2.filter2D(frame, -1, self._sharpen_kernel)
+        blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
+        return cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
 
     def prepare_frame_for_analysis(self, frame: np.ndarray) -> np.ndarray:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
