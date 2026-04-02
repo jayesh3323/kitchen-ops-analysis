@@ -80,7 +80,7 @@ AGENT_CLIP_BUFFER_SECONDS     = 2
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
 AGENT_IMAGE_QUALITY           = 95
-AGENT_IMAGE_UPSCALE_FACTOR    = 2.0
+AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "JPEG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
@@ -587,7 +587,15 @@ class PorkWeighingPipeline:
         logger.info(f"Interpolation: {config.image_interpolation}")
 
         # Pre-create CLAHE object to avoid repeated allocation in apply_clahe
-        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # self._clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4))
+
+        # Sharpening kernel: unsharp-mask style — enhances digit edges for OCR
+        import numpy as _np
+        self._sharpen_kernel = _np.array([
+            [ 0, -1,  0],
+            [-1,  5, -1],
+            [ 0, -1,  0],
+        ], dtype=_np.float32)
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -817,19 +825,20 @@ class PorkWeighingPipeline:
 
     def apply_clahe(self, frame: np.ndarray) -> np.ndarray:
         """Apply CLAHE to the L channel (LAB space) to enhance scale display contrast."""
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        # Use the cached CLAHE object instead of creating a new one per frame
-        enhanced_l = self._clahe.apply(l)
-        enhanced_lab = cv2.merge([enhanced_l, a, b])
-        return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        # l, a, b = cv2.split(lab)
+        # # Use the cached CLAHE object instead of creating a new one per frame
+        # enhanced_l = self._clahe.apply(l)
+        # enhanced_lab = cv2.merge([enhanced_l, a, b])
+        # return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+        return cv2.filter2D(frame, -1, self._sharpen_kernel)
 
     def prepare_frame_for_analysis(self, frame: np.ndarray) -> np.ndarray:
         """Prepare frame for OCR/Analysis based on enable_cropping setting."""
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
             upscaled = self.upscale_frame(cropped)
-            return self.apply_clahe(upscaled)
+            return self.apply_clahe(upscaled)  # applies sharpening (CLAHE commented out)
         else:
             return self.draw_roi_box(frame)
 
