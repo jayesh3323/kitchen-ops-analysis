@@ -77,14 +77,14 @@ AGENT_FPS                     = 1.0
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 35.0
 AGENT_CLIP_BUFFER_SECONDS     = 2
-AGENT_MAX_FRAMES_PER_BATCH    = 300
-AGENT_BATCH_OVERLAP_FRAMES    = 2
-AGENT_IMAGE_QUALITY           = 100
-AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
+AGENT_MAX_FRAMES_PER_BATCH    = 30
+AGENT_BATCH_OVERLAP_FRAMES    = 5
+AGENT_IMAGE_QUALITY           = 95
+AGENT_IMAGE_UPSCALE_FACTOR    = 2.0
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
+AGENT_IMAGE_INTERPOLATION     = "CUBIC"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
 
@@ -587,11 +587,11 @@ class PorkWeighingPipeline:
         logger.info(f"Interpolation: {config.image_interpolation}")
 
         # CLAHE: enhances local contrast on L channel (LAB colorspace)
-        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        self._clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(16, 16))
 
         # Unsharp mask strength: result = orig*(1+alpha) - blurred*alpha
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
-        self._sharpen_alpha = 1.0
+        self._sharpen_alpha = 0.5
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -825,10 +825,10 @@ class PorkWeighingPipeline:
         Comment out either block independently to disable that step.
         """
         # ── CLAHE: boost local contrast on L channel ──────────────────────────
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        enhanced_l = self._clahe.apply(l)
-        frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
+        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        # l, a, b = cv2.split(lab)
+        # enhanced_l = self._clahe.apply(l)
+        # frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
 
         # ── Unsharp mask: suppress noise then add back clean edges ────────────
         blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
