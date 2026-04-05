@@ -533,7 +533,7 @@ def auto_detect_roi(
             f"(from {len(results)}/{len(frames)} frames that found a region)"
         )
 
-        annotated_bytes = _draw_roi_annotation(best_frame, best_bbox, best_conf)
+        annotated_bytes = _draw_roi_annotation(best_frame, (x1, y1, x2, y2), best_conf)
 
         return {
             "roi": [x1, y1, x2, y2],

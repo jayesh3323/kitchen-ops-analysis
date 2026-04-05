@@ -1020,6 +1020,12 @@ class CustomerServicePipeline:
             )
 
             result = json.loads(raw_content)
+            if not isinstance(result, dict):
+                if isinstance(result, list):
+                    logger.warning(f"Batch {batch.batch_id}: LLM returned a list instead of an object. Wrapping.")
+                    result = {"detections": result, "context_summary": ""}
+                else:
+                    result = {"detections": [], "context_summary": ""}
             
             # DEBUG: Log parsed detections before filtering
             raw_detections = result.get("detections", [])
@@ -1281,6 +1287,12 @@ class CustomerServicePipeline:
                 result_text = result_text.replace("```json", "").replace("```", "")
 
             result = json.loads(result_text)
+            if not isinstance(result, dict):
+                if isinstance(result, list) and len(result) > 0:
+                    logger.warning(f"Clip {clip_index}: Gemini returned a list instead of an object. Using first element.")
+                    result = result[0]
+                else:
+                    result = {"is_valid": False, "confidence": 0.0, "reasoning": "Invalid JSON structure from Gemini"}
 
             # Track token usage
             tokens_used = 0

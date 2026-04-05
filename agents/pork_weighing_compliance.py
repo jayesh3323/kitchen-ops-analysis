@@ -766,6 +766,12 @@ class PorkWeighingPipeline:
                 if raw.startswith("```"):
                     raw = raw.split("```")[1].lstrip("json").strip()
                 result = json.loads(raw)
+                if not isinstance(result, dict):
+                    if isinstance(result, list) and len(result) > 0:
+                        result = result[0]
+                    else:
+                        result = {}
+                
                 if result.get("upright") is True:
                     logger.info(f"detect_rotation: angle {angle}° confirmed upright by model")
                     return angle
@@ -1060,6 +1066,13 @@ class PorkWeighingPipeline:
                 f"=== Batch {batch.batch_id} ===\n{raw_content}"
             )
             result = json.loads(raw_content)
+            if not isinstance(result, dict):
+                # If Gemini/GPT returns a list instead of a dict with a "detections" key
+                if isinstance(result, list):
+                    logger.warning(f"Batch {batch.batch_id}: LLM returned a list instead of an object. Wrapping.")
+                    result = {"detections": result, "context_summary": ""}
+                else:
+                    result = {"detections": [], "context_summary": ""}
 
             raw_detections = result.get("detections", [])
             logger.info(f"Batch {batch.batch_id}: {len(raw_detections)} raw detections")
@@ -1275,8 +1288,12 @@ class PorkWeighingPipeline:
                 result_text = result_text.replace("```json", "").replace("```", "")
 
             result = json.loads(result_text)
-
-            # Track token usage
+            if not isinstance(result, dict):
+                if isinstance(result, list) and len(result) > 0:
+                    logger.warning(f"Clip {clip_index}: Gemini returned a list instead of an object. Using first element.")
+                    result = result[0]
+                else:
+                    result = {"is_valid": False, "confidence": 0.0, "reasoning": "Invalid JSON structure from Gemini"}
             tokens_used = 0
             try:
                 if hasattr(response, 'usage_metadata'):
