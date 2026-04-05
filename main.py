@@ -738,25 +738,22 @@ async def auto_detect_timestamp_endpoint(
         if not ret or frame is None:
             raise HTTPException(status_code=500, detail="Could not extract frame from video")
 
-        # ── Apply rotation ────────────────────────────────────────────────────
-        if rotation_angle == 90:
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-        elif rotation_angle == 180:
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
-        elif rotation_angle == 270:
-            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-        # ── Crop full-width row y=0→700 — covers CCTV timestamp band
+        # ── OCR on raw unrotated frame — timestamp is always bottom-left ──────
+        # The camera burns the timestamp into the original frame before any
+        # rotation is applied for analysis. Rotating first moves the bottom-left
+        # corner to an unpredictable position depending on angle.
         h, w = frame.shape[:2]
-        ts_x1, ts_y1 = 0, 0
-        ts_x2, ts_y2 = w, min(700, h)
+        ts_x1 = 0
+        ts_y1 = max(0, h - 200)   # bottom 200 rows
+        ts_x2 = w // 2             # left half only
+        ts_y2 = h
         ts_crop = frame[ts_y1:ts_y2, ts_x1:ts_x2]
 
         _, crop_buf = cv2.imencode(".jpg", ts_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
         crop_b64 = base64.b64encode(crop_buf.tobytes()).decode("utf-8")
 
         logger.info(f"Auto-detecting timestamp from bottom-left region "
-                    f"({ts_x1},{ts_y1})→({ts_x2},{ts_y2}) of {w}×{h} frame")
+                    f"({ts_x1},{ts_y1})→({ts_x2},{ts_y2}) of {w}×{h} raw frame")
 
         # ── OCR via existing timestamp_ocr helper ─────────────────────────────
         ocr_client = OpenAI(api_key=app_config.OPENAI_API_KEY)
@@ -765,7 +762,7 @@ async def auto_detect_timestamp_endpoint(
         )
         logger.info(f"Timestamp OCR: date={recording_date} hour={recording_hour} raw='{raw_timestamp}'")
 
-        # ── Annotate full frame with the cropped region highlighted ───────────
+        # ── Annotate on raw frame with the cropped region highlighted ─────────
         annotated = frame.copy()
         cv2.rectangle(annotated, (ts_x1, ts_y1), (ts_x2, ts_y2), (0, 200, 100), 2)
         ts_label = raw_timestamp[:40] if raw_timestamp else "Timestamp region"
