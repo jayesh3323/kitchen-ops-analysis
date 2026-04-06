@@ -45,13 +45,15 @@ _AGENT_CONTEXT = {
     ),
     "serve_time": (
         "This is a restaurant CCTV recording, often from a wide-angle or fisheye camera. "
-        "Locate the KITCHEN COUNTER AND COOKING STATION — the long counter behind which chefs in white uniforms work. "
-        "This counter runs the full width of the kitchen and contains cooking equipment (pots, woks, trays), "
-        "ingredient containers, and the shiny grey/silver serving surface where completed ramen bowls are placed "
-        "before being handed to customers. "
+        "Locate the KITCHEN COUNTER AND PASS-THROUGH — the counter or surface that separates "
+        "the kitchen work area from the customer seating area. "
+        "This counter holds cooking equipment, ingredient containers, and stacked bowls or dishes "
+        "on the kitchen side, and has a flat pass surface where completed bowls are placed before "
+        "being handed to customers. "
         "Return a single bounding box that covers the ENTIRE counter surface from end to end, "
-        "including all equipment and the serving pass area. "
-        "In fisheye views the counter may appear as a diagonal band — the box must span it fully. "
+        "including the kitchen equipment side and the serving pass area. "
+        "In fisheye or wide-angle views the counter may appear as a diagonal or curved band — "
+        "the box must span it fully. "
         "Include a generous margin around the counter edges."
     ),
     "noodle_rotation": (
@@ -60,13 +62,15 @@ _AGENT_CONTEXT = {
         "and return its bounding box. Include a generous margin around the station."
     ),
     "bowl_completion_rate": (
-        "This is a restaurant CCTV recording, typically from a side or end-of-counter camera angle. "
-        "Locate the KITCHEN PREP AND PLATING COUNTER — the section of counter where ramen bowls are assembled "
-        "and finalized before service. This area faces the customer seating and contains stacked or active "
-        "light blue/teal ramen bowls, cooking and plating equipment, and the serving surface. "
-        "Return a single bounding box that covers this kitchen counter section only. "
-        "Do NOT include the customer seating area in front of the counter — focus exclusively on the "
-        "kitchen prep side. Include a generous margin around the counter edges."
+        "This is a restaurant CCTV recording, typically from an overhead or angled camera "
+        "looking down at the customer seating area. "
+        "Locate the DINING COUNTER — the counter surface at which customers sit and eat. "
+        "This counter has condiment containers, seasoning bottles, and napkin dispensers "
+        "arranged along its surface, and has seating positions (stools or seats) adjacent to it. "
+        "Return a single bounding box that covers the dining counter surface and its immediate "
+        "seating edge. "
+        "Do NOT include the kitchen or cooking area — focus on the eating/dining side only. "
+        "Include a generous margin around the counter edges."
     ),
 }
 
@@ -89,24 +93,24 @@ _AGENT_VISUAL_CUES = {
         "The entire table — from edge to edge — must be enclosed, not just the active bowl."
     ),
     "serve_time": (
-        "Inside the target box you will see the full kitchen cooking and serving counter: "
-        "chefs in white uniforms working over pots, woks, and trays; the entire counter surface "
-        "from left edge to right edge (it may appear as a wide diagonal band in fisheye views); "
-        "cooking equipment and ingredient containers on the counter; and the shiny grey/silver "
-        "serving surface where completed ramen bowls are placed before pickup. "
-        "The box must span the counter end-to-end — do NOT crop to just one chef or one section."
+        "Inside the target box you will see the full kitchen counter and pass-through zone: "
+        "cooking equipment, pots, containers, and food preparation items on the kitchen side; "
+        "the flat serving surface where completed bowls are placed before pickup; "
+        "and stacked dishes or serving supplies. "
+        "The box must span the counter end-to-end — do NOT crop to just one section. "
+        "In fisheye or angled views the counter may appear as a diagonal band across the frame."
     ),
     "noodle_rotation": (
         "Inside the target box you will see the noodle cooking station: a pot, wok, or "
         "noodle basket with hot water or steam, and utensils or hands handling noodles."
     ),
     "bowl_completion_rate": (
-        "Inside the target box you will see the kitchen plating and prep counter only: "
-        "stacked or active light blue/teal ramen bowls being assembled or awaiting service; "
-        "the prep counter surface with cooking and plating equipment; and the serving pass area "
-        "immediately adjacent. The distinctive light blue bowls are a key visual anchor. "
-        "The customer seating area in FRONT of the counter must NOT be inside the box — "
-        "exclude any customers, dining chairs, or floor space."
+        "Inside the target box you will see the dining counter surface: "
+        "condiment containers, seasoning bottles, and napkin dispensers arranged along the counter; "
+        "the flat counter surface where food bowls are placed for eating; "
+        "and the adjacent seating positions. "
+        "Do NOT include cooking equipment or the kitchen prep area — "
+        "this is the customer-facing eating counter only."
     ),
 }
 
@@ -114,7 +118,7 @@ _AGENT_VISUAL_CUES = {
 # Larger value → more context added around the detected region.
 # Small objects (scale) need large expansion; wide areas (counter) need smaller.
 _AGENT_MARGIN = {
-    "pork_weighing":  0,   # scale is small — expand generously to include display + platform
+    "pork_weighing":  0.3,   # scale is small — expand generously to include display + platform
     "plating_time":   0,     # plating table is large — 0 margin to avoid spilling off-frame
     "serve_time":     0,     # seating area spans wide — 0 margin to keep focus on counter
     "noodle_rotation": 0.4,

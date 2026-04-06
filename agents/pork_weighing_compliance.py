@@ -72,19 +72,19 @@ load_dotenv()
 # ============================================================================
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
-AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
+AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-flash"
 AGENT_FPS                     = 0.5
-AGENT_CONFIDENCE_THRESHOLD    = 0.6
+AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
 AGENT_CLIP_BUFFER_SECONDS     = 5
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
-AGENT_IMAGE_QUALITY           = 95
+AGENT_IMAGE_QUALITY           = 100
 AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
-AGENT_IMAGE_FORMAT            = "PNG"
+AGENT_IMAGE_FORMAT            = "JPEG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_PNG_COMPRESSION         = 7   # 0 = no compression, 9 = max compression (default OpenCV = 3)
+AGENT_PNG_COMPRESSION         = 3   # 0 = no compression, 9 = max compression (default OpenCV = 3)
 AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
@@ -796,7 +796,7 @@ class PorkWeighingPipeline:
     # Cap the long edge to 640px — matching final.py's typical tight ROI output
     # after 2× upscale (~300×200 raw → 600×400 upscaled) — to keep per-frame
     # PNG sizes and batch counts consistent between the two implementations.
-    _MAX_UPSCALED_LONG_EDGE = 640
+    _MAX_UPSCALED_LONG_EDGE = 1024
 
     def upscale_frame(self, frame: np.ndarray) -> np.ndarray:
         """Upscale frame by the configured upscale factor and optionally resize to target resolution."""
@@ -832,14 +832,14 @@ class PorkWeighingPipeline:
         Comment out either block independently to disable that step.
         """
         # ── CLAHE: boost local contrast on L channel ──────────────────────────
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        enhanced_l = self._clahe.apply(l)
-        frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
+        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        # l, a, b = cv2.split(lab)
+        # enhanced_l = self._clahe.apply(l)
+        # frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
 
         # ── Unsharp mask: suppress noise then add back clean edges ────────────
-        blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
-        frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
+        # blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
+        # frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
 
         return frame
 
