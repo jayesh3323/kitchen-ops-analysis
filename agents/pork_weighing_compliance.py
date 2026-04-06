@@ -73,18 +73,19 @@ load_dotenv()
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
-AGENT_FPS                     = 1.0
-AGENT_CONFIDENCE_THRESHOLD    = 0.1
-AGENT_MAX_BATCH_SIZE_MB       = 35.0
-AGENT_CLIP_BUFFER_SECONDS     = 2
-AGENT_MAX_FRAMES_PER_BATCH    = 30
-AGENT_BATCH_OVERLAP_FRAMES    = 5
+AGENT_FPS                     = 0.5
+AGENT_CONFIDENCE_THRESHOLD    = 0.8
+AGENT_MAX_BATCH_SIZE_MB       = 30.0
+AGENT_CLIP_BUFFER_SECONDS     = 5
+AGENT_MAX_FRAMES_PER_BATCH    = 300
+AGENT_BATCH_OVERLAP_FRAMES    = 2
 AGENT_IMAGE_QUALITY           = 95
-AGENT_IMAGE_UPSCALE_FACTOR    = 2.0
+AGENT_IMAGE_UPSCALE_FACTOR    = 1.0
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_IMAGE_INTERPOLATION     = "CUBIC"
+AGENT_PNG_COMPRESSION         = 3   # 0 = no compression, 9 = max compression (default OpenCV = 3)
+AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
 
@@ -117,6 +118,7 @@ IMAGE_TARGET_RESOLUTION = os.getenv("IMAGE_TARGET_RESOLUTION",   AGENT_IMAGE_TAR
 IMAGE_FORMAT            = os.getenv("IMAGE_FORMAT", AGENT_IMAGE_FORMAT).upper()
 PHASE2_IMAGE_FORMAT     = AGENT_PHASE2_IMAGE_FORMAT # always "PNG" — not env-overridable for this task
 IMAGE_INTERPOLATION     = os.getenv("IMAGE_INTERPOLATION", AGENT_IMAGE_INTERPOLATION).upper()
+PNG_COMPRESSION         = int(os.getenv("PNG_COMPRESSION", str(AGENT_PNG_COMPRESSION)))
 # Cropping / Rotation
 ENABLE_CROPPING = os.getenv("ENABLE_CROPPING", str(AGENT_ENABLE_CROPPING)).lower() == "true"
 ROTATION_ANGLE  = int(os.getenv("ROTATION_ANGLE", str(AGENT_ROTATION_ANGLE)))
@@ -307,7 +309,6 @@ if not logger.handlers:
     logger.addHandler(_sh)
     logger.propagate = False
 
-
 # ============================================================================
 # 📦 DATA STRUCTURES
 # ============================================================================
@@ -334,6 +335,7 @@ class PipelineConfig:
     image_format: str = IMAGE_FORMAT
     phase2_image_format: str = PHASE2_IMAGE_FORMAT
     image_interpolation: str = IMAGE_INTERPOLATION
+    png_compression: int = PNG_COMPRESSION
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -587,11 +589,11 @@ class PorkWeighingPipeline:
         logger.info(f"Interpolation: {config.image_interpolation}")
 
         # CLAHE: enhances local contrast on L channel (LAB colorspace)
-        self._clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(16, 16))
+        self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 
         # Unsharp mask strength: result = orig*(1+alpha) - blurred*alpha
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
-        self._sharpen_alpha = 0.5
+        self._sharpen_alpha = 0.8
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -832,10 +834,10 @@ class PorkWeighingPipeline:
         Comment out either block independently to disable that step.
         """
         # ── CLAHE: boost local contrast on L channel ──────────────────────────
-        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        # l, a, b = cv2.split(lab)
-        # enhanced_l = self._clahe.apply(l)
-        # frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        enhanced_l = self._clahe.apply(l)
+        frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
 
         # ── Unsharp mask: suppress noise then add back clean edges ────────────
         blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
@@ -899,7 +901,8 @@ class PorkWeighingPipeline:
         image_format = format_override.upper() if format_override else self.config.image_format
 
         if image_format == "PNG":
-            _, buf = cv2.imencode(".png", frame)
+            compression = getattr(self.config, 'png_compression', PNG_COMPRESSION)
+            _, buf = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         else:
             quality = getattr(self.config, 'image_quality', IMAGE_QUALITY)
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
