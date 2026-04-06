@@ -44,17 +44,17 @@ _AGENT_CONTEXT = {
         "ingredients, and tools on it. Include a generous margin around the table edges."
     ),
     "serve_time": (
-        "This is a restaurant CCTV recording, often from a wide-angle or fisheye camera. "
-        "Locate the KITCHEN COUNTER AND PASS-THROUGH — the counter or surface that separates "
-        "the kitchen work area from the customer seating area. "
-        "This counter holds cooking equipment, ingredient containers, and stacked bowls or dishes "
-        "on the kitchen side, and has a flat pass surface where completed bowls are placed before "
-        "being handed to customers. "
-        "Return a single bounding box that covers the ENTIRE counter surface from end to end, "
-        "including the kitchen equipment side and the serving pass area. "
-        "In fisheye or wide-angle views the counter may appear as a diagonal or curved band — "
-        "the box must span it fully. "
-        "Include a generous margin around the counter edges."
+        "This is a restaurant CCTV recording. "
+        "Locate ONLY the kitchen pass-through counter — the narrow counter surface that physically "
+        "separates the kitchen work area from the customer seating area. "
+        "The kitchen side of this counter holds cooking equipment, containers, and stacked dishware. "
+        "The customer side is the flat pass surface where completed bowls are placed before service. "
+        "This is a NARROW BAND — typically a fraction of the full frame height. "
+        "Return a bounding box that covers ONLY this counter band, including the kitchen equipment "
+        "immediately behind it and the serving pass surface. "
+        "Do NOT box the entire frame. Do NOT include the ceiling, walls, floor, or open dining area. "
+        "In fisheye or wide-angle views the counter may run diagonally — follow the counter band only. "
+        "The box must NOT exceed roughly half the image area."
     ),
     "noodle_rotation": (
         "This is a kitchen CCTV recording. "
@@ -62,16 +62,16 @@ _AGENT_CONTEXT = {
         "and return its bounding box. Include a generous margin around the station."
     ),
     "bowl_completion_rate": (
-        "This is a restaurant CCTV recording, typically from an overhead or angled camera "
-        "looking down at the customer seating area. "
-        "Locate the DINING COUNTER — the counter surface at which customers sit and eat. "
-        "This counter has condiment containers, seasoning bottles, and napkin dispensers "
-        "arranged along its surface, and has seating positions (stools or seats) adjacent to it. "
-        "Return a single bounding box that covers the dining counter surface and its immediate "
-        "seating edge. "
-        "Do NOT include the kitchen or cooking area — focus on the eating/dining side only. "
-        "Include a generous margin around the counter edges."
-    ),
+        "This is a restaurant CCTV recording, typically from an overhead or angled camera. "
+"Locate ONLY the dining counter surface — the narrow counter or bar at which customers sit "
+"and eat. This counter has condiment containers and napkin dispensers arranged on its surface, "
+"and has seating positions directly adjacent to it. "
+"Return a bounding box that covers ONLY the counter top surface and the immediate seating edge. "
+"Do NOT include the kitchen, cooking equipment, open floor space, walls, or entrance. "
+"Do NOT box the entire frame. "
+"The box should tightly enclose the counter surface — it is a NARROW BAND, "
+"typically covering well under half the image area."
+),
 }
 
 # Visual content description for what should be SEEN inside the target ROI box.
@@ -93,24 +93,26 @@ _AGENT_VISUAL_CUES = {
         "The entire table — from edge to edge — must be enclosed, not just the active bowl."
     ),
     "serve_time": (
-        "Inside the target box you will see the full kitchen counter and pass-through zone: "
-        "cooking equipment, pots, containers, and food preparation items on the kitchen side; "
-        "the flat serving surface where completed bowls are placed before pickup; "
-        "and stacked dishes or serving supplies. "
-        "The box must span the counter end-to-end — do NOT crop to just one section. "
-        "In fisheye or angled views the counter may appear as a diagonal band across the frame."
+        "Inside the target box you will see ONLY the kitchen counter band: "
+"cooking equipment, pots, and containers on the kitchen side; "
+"stacked dishware and serving supplies; "
+"the flat pass surface where completed bowls are placed for pickup. "
+"EXCLUDE: the entire dining floor, open seating area, walls, ceiling, and entrance. "
+"EXCLUDE: anything more than one counter-width above or below the counter surface itself. "
+"The box should be a horizontal or diagonal band — NOT a box covering most of the frame."
     ),
     "noodle_rotation": (
         "Inside the target box you will see the noodle cooking station: a pot, wok, or "
         "noodle basket with hot water or steam, and utensils or hands handling noodles."
     ),
     "bowl_completion_rate": (
-        "Inside the target box you will see the dining counter surface: "
-        "condiment containers, seasoning bottles, and napkin dispensers arranged along the counter; "
-        "the flat counter surface where food bowls are placed for eating; "
-        "and the adjacent seating positions. "
-        "Do NOT include cooking equipment or the kitchen prep area — "
-        "this is the customer-facing eating counter only."
+        "Inside the target box you will see ONLY the dining counter surface: "
+"condiment containers and napkin dispensers arranged along the counter top; "
+"the flat counter surface where food bowls are placed for eating; "
+"seating positions (empty spots) directly adjacent to the counter. "
+"EXCLUDE: the kitchen, cooking or prep equipment, open floor space, walls, ceiling, "
+"and any area more than one counter-width away from the counter surface. "
+"The box should be a narrow band following the counter — NOT a box covering most of the frame."
     ),
 }
 
