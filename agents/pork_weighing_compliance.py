@@ -72,7 +72,7 @@ load_dotenv()
 # ============================================================================
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
-AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-flash"
+AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
 AGENT_FPS                     = 0.5
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
@@ -593,6 +593,11 @@ class PorkWeighingPipeline:
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
         self._sharpen_alpha = 1.0
 
+        # Red-circle visual prompting: list of (cx, cy, radius) in crop-space pixels.
+        # Populated once by detect_display_circles() before Phase 1 frame extraction.
+        # None = not yet detected; [] = detection ran but found nothing.
+        self.display_circles: Optional[List[Tuple[int, int, int]]] = None
+
     def cleanup(self):
         """Clean up temporary files."""
         if os.path.exists(self.temp_dir):
@@ -826,6 +831,168 @@ class PorkWeighingPipeline:
         cv2.rectangle(frame_with_box, (x1, y1), (x2, y2), (0, 255, 0), 3)
         return frame_with_box
 
+    # -------------------------------------------------------------------------
+    # Red-circle visual prompting
+    # -------------------------------------------------------------------------
+
+    _DISPLAY_DETECT_PROMPT = (
+        "You are analysing a single cropped CCTV frame from a kitchen weighing station. "
+        "Your task is to locate every digital readout panel (LCD/LED display) of a weighing scale "
+        "that is visible in this image. "
+        "Each display shows a numeric weight value. "
+        "There may be one or more displays. "
+        "For EACH display, return a bounding box tightly around the display panel only — "
+        "not the whole scale, not the platform, just the rectangular display face. "
+        "Return ONLY a JSON object (no markdown) in this exact format:\n"
+        '{"displays": ['
+        '{"x1": <0.0-1.0>, "y1": <0.0-1.0>, "x2": <0.0-1.0>, "y2": <0.0-1.0>}, ...'
+        "]}\n"
+        "All coordinates are normalised fractions of image width/height (0.0 = left/top, 1.0 = right/bottom). "
+        "If no display is visible, return {\"displays\": []}."
+    )
+
+    def detect_display_circles(self, video_path: str) -> None:
+        """Detect digital display panel locations once and store as red-circle overlays.
+
+        Samples up to 3 frames from early in the video, crops each to the ROI,
+        and asks GPT to locate every scale display. The detected bounding boxes are
+        converted to (cx, cy, radius) tuples in crop-space pixels and stored as
+        self.display_circles so prepare_frame_for_analysis() can annotate every frame.
+
+        Falls back gracefully — if detection fails, self.display_circles stays None
+        and no circles are drawn.
+        """
+        if not self.config.enable_cropping or self.roi is None:
+            logger.info("Red-circle detection skipped (cropping disabled or no ROI set)")
+            self.display_circles = []
+            return
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logger.warning("detect_display_circles: cannot open video")
+            self.display_circles = []
+            return
+
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Sample 3 frames spread across the first 20% of the video
+        sample_indices = [int(total * f) for f in (0.05, 0.10, 0.15)]
+        sample_indices = [min(max(0, idx), total - 1) for idx in sample_indices]
+
+        cropped_frames: List[np.ndarray] = []
+        for idx in sample_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            rotated = self.rotate_frame(frame)
+            cropped = self.crop_frame(rotated)
+            if cropped.size > 0:
+                cropped_frames.append(cropped)
+        cap.release()
+
+        if not cropped_frames:
+            logger.warning("detect_display_circles: no frames extracted")
+            self.display_circles = []
+            return
+
+        # Try each frame; stop as soon as at least one display is found
+        all_boxes: List[Tuple[float, float, float, float]] = []
+        for crop in cropped_frames:
+            h, w = crop.shape[:2]
+            # Encode as JPEG (smaller payload — detail:low is sufficient for bounding box)
+            ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                continue
+            b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
+
+            try:
+                resp = self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=256,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url",
+                             "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
+                            {"type": "text", "text": self._DISPLAY_DETECT_PROMPT},
+                        ],
+                    }],
+                    response_format={"type": "json_object"},
+                )
+                raw = resp.choices[0].message.content or "{}"
+                result = json.loads(raw)
+                boxes = result.get("displays", [])
+                if boxes:
+                    # Convert normalised coords → pixel bounding boxes in this crop
+                    for box in boxes:
+                        x1n = float(box.get("x1", 0))
+                        y1n = float(box.get("y1", 0))
+                        x2n = float(box.get("x2", 1))
+                        y2n = float(box.get("y2", 1))
+                        # Clamp
+                        x1n, x2n = max(0.0, x1n), min(1.0, x2n)
+                        y1n, y2n = max(0.0, y1n), min(1.0, y2n)
+                        if x2n > x1n and y2n > y1n:
+                            all_boxes.append((x1n, y1n, x2n, y2n))
+                    if all_boxes:
+                        logger.info(f"Red-circle detection: found {len(all_boxes)} display(s) in crop")
+                        break  # stop after first successful frame
+            except Exception as e:
+                logger.warning(f"detect_display_circles: VLM call failed — {e}")
+                continue
+
+        if not all_boxes:
+            logger.warning("Red-circle detection: no displays found in any sample frame")
+            self.display_circles = []
+            return
+
+        # Convert bounding boxes → (cx, cy, radius) using the first cropped frame dimensions
+        ref_h, ref_w = cropped_frames[0].shape[:2]
+        circles: List[Tuple[int, int, int]] = []
+        for x1n, y1n, x2n, y2n in all_boxes:
+            cx = int(((x1n + x2n) / 2) * ref_w)
+            cy = int(((y1n + y2n) / 2) * ref_h)
+            # Radius = half the longer side of the box, with a 20% padding
+            bw = (x2n - x1n) * ref_w
+            bh = (y2n - y1n) * ref_h
+            radius = int(max(bw, bh) / 2 * 1.2)
+            radius = max(radius, 10)  # never smaller than 10px
+            circles.append((cx, cy, radius))
+            logger.info(f"  Display circle: center=({cx},{cy}) radius={radius}px")
+
+        self.display_circles = circles
+        # Store crop dimensions so draw_display_circles can scale correctly after upscaling
+        self._display_circles_ref_w = ref_w
+        self._display_circles_ref_h = ref_h
+
+    def draw_display_circles(self, frame: np.ndarray) -> np.ndarray:
+        """Draw red circles on detected scale display locations.
+
+        Coordinates are in the space of the crop *before* upscaling, so they are
+        scaled proportionally to match the upscaled frame dimensions.
+        """
+        if not self.display_circles:
+            return frame
+
+        annotated = frame.copy()
+        fh, fw = frame.shape[:2]
+
+        # display_circles were recorded on the raw crop; upscale_frame may have changed
+        # the size. We store the reference dimensions alongside so we can scale correctly.
+        ref_w = getattr(self, "_display_circles_ref_w", fw)
+        ref_h = getattr(self, "_display_circles_ref_h", fh)
+        scale_x = fw / ref_w if ref_w else 1.0
+        scale_y = fh / ref_h if ref_h else 1.0
+
+        for cx, cy, radius in self.display_circles:
+            scaled_cx = int(cx * scale_x)
+            scaled_cy = int(cy * scale_y)
+            scaled_r  = int(radius * max(scale_x, scale_y))
+            cv2.circle(annotated, (scaled_cx, scaled_cy), scaled_r, (0, 0, 255), 3)
+
+        return annotated
+
     def apply_clahe(self, frame: np.ndarray) -> np.ndarray:
         """Enhance frame for OCR legibility: CLAHE then unsharp-mask sharpening.
 
@@ -848,7 +1015,8 @@ class PorkWeighingPipeline:
         if self.config.enable_cropping:
             cropped = self.crop_frame(frame)
             upscaled = self.upscale_frame(cropped)
-            return self.apply_clahe(upscaled)
+            enhanced = self.apply_clahe(upscaled)
+            return self.draw_display_circles(enhanced)
         else:
             return self.draw_roi_box(frame)
 
@@ -1104,6 +1272,16 @@ class PorkWeighingPipeline:
     def run_phase1(self, video_path: str) -> List[Detection]:
         """Run phase 1: Initial detection."""
         logger.info(f"PHASE 1: Scanning {video_path}")
+
+        # Detect scale display locations once; results are drawn on every frame via
+        # prepare_frame_for_analysis → draw_display_circles.
+        if self.display_circles is None:
+            try:
+                self.detect_display_circles(video_path)
+            except Exception as _dc_err:
+                logger.warning(f"Display circle detection failed (non-fatal): {_dc_err}")
+                self.display_circles = []
+
         all_frames = self.extract_frames(video_path)
         self.all_frames = all_frames  # keep for Phase 2 frame re-use
         batches = self.create_batches(all_frames)
