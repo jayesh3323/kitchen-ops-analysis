@@ -57,11 +57,10 @@ _AGENT_DEFAULTS_KEYS = [
     "AGENT_IMAGE_INTERPOLATION",
     "AGENT_ENABLE_CROPPING",
     "AGENT_ROTATION_ANGLE",
-    "AGENT_PHASE1_REASONING_EFFORT",
 ]
 
 _FALLBACK_AGENT_DEFAULTS = {
-    "AGENT_PHASE1_MODEL_NAME":       "o4-mini",
+    "AGENT_PHASE1_MODEL_NAME":       "gpt-5-mini",
     "AGENT_PHASE2_MODEL_NAME":       "gemini-2.5-pro",
     "AGENT_FPS":                     1.0,
     "AGENT_CONFIDENCE_THRESHOLD":    0.7,
@@ -77,7 +76,6 @@ _FALLBACK_AGENT_DEFAULTS = {
     "AGENT_IMAGE_INTERPOLATION":     "CUBIC",
     "AGENT_ENABLE_CROPPING":         True,
     "AGENT_ROTATION_ANGLE":          270,
-    "AGENT_PHASE1_REASONING_EFFORT": "medium",
 }
 
 
@@ -115,7 +113,6 @@ try:
         AGENT_IMAGE_INTERPOLATION,
         AGENT_ENABLE_CROPPING,
         AGENT_ROTATION_ANGLE,
-        AGENT_PHASE1_REASONING_EFFORT,
     )
 except Exception:
     _fb = _FALLBACK_AGENT_DEFAULTS
@@ -135,7 +132,6 @@ except Exception:
     AGENT_IMAGE_INTERPOLATION     = _fb["AGENT_IMAGE_INTERPOLATION"]
     AGENT_ENABLE_CROPPING         = _fb["AGENT_ENABLE_CROPPING"]
     AGENT_ROTATION_ANGLE          = _fb["AGENT_ROTATION_ANGLE"]
-    AGENT_PHASE1_REASONING_EFFORT = _fb["AGENT_PHASE1_REASONING_EFFORT"]
 
 # =============================================================================
 # Model Configuration

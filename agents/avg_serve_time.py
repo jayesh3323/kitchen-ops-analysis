@@ -46,7 +46,7 @@ load_dotenv()
 # webapp/config.py can import these when this agent is active.
 # ============================================================================
 
-AGENT_PHASE1_MODEL_NAME       = "o4-mini"
+AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
 AGENT_FPS                     = 1.0
 AGENT_CONFIDENCE_THRESHOLD    = 0.7
@@ -72,7 +72,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 PHASE1_MODEL_NAME = os.getenv("PHASE1_MODEL_NAME", AGENT_PHASE1_MODEL_NAME)
-PHASE1_REASONING_EFFORT = os.getenv("PHASE1_REASONING_EFFORT", "medium")
 PHASE2_MODEL_NAME = os.getenv("PHASE2_MODEL_NAME", AGENT_PHASE2_MODEL_NAME)
 
 # Analysis Mode Settings
@@ -299,7 +298,6 @@ class PipelineConfig:
     confidence_threshold: float = CONFIDENCE_THRESHOLD
     batch_overlap_frames: int = BATCH_OVERLAP_FRAMES
     phase1_model_name: str = PHASE1_MODEL_NAME
-    phase1_reasoning_effort: str = PHASE1_REASONING_EFFORT
     phase2_model_name: str = PHASE2_MODEL_NAME
     enable_phase2: bool = ENABLE_PHASE2
     enable_cropping: bool = ENABLE_CROPPING
@@ -1004,9 +1002,7 @@ class CustomerServicePipeline:
             response = self.openai_client.chat.completions.create(
                 model=self.config.phase1_model_name,
                 messages=[{"role": "user", "content": content}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=4096,
-                reasoning_effort=getattr(self.config, "phase1_reasoning_effort", "medium")
+                response_format={"type": "json_object"}
             )
             
             # DEBUG: Log raw API response content

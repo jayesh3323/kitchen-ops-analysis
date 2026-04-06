@@ -129,6 +129,7 @@ function updateTaskUI(tabEl) {
     const roiLabel = tabEl.dataset.roiLabel || 'Detect Scale ROI';
     const phase2Label = tabEl.dataset.phase2Label || 'Phase 2 Verification';
     const taskDesc = tabEl.dataset.taskDesc || '';
+    const fpsDefault = tabEl.dataset.fps || '1.0';
 
     const roiBtn = document.getElementById('auto-detect-roi-btn');
     if (roiBtn) roiBtn.textContent = `🔍 Step 2: ${roiLabel}`;
@@ -140,9 +141,7 @@ function updateTaskUI(tabEl) {
     if (descEl) descEl.textContent = taskDesc;
 
     const fpsInput = document.getElementById('fps-input');
-    if (fpsInput && tabEl.dataset.fps) {
-        fpsInput.value = tabEl.dataset.fps;
-    }
+    if (fpsInput) fpsInput.value = fpsDefault;
 }
 
 function handleFormResize() {
