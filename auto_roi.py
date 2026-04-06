@@ -126,7 +126,7 @@ _AGENT_MARGIN = {
     "noodle_rotation": 0.4,
     "bowl_completion_rate": 0, # covers two zones already — 0 margin to exclude customer area
 }
-_DEFAULT_MARGIN = 0.3
+_DEFAULT_MARGIN = 0
 
 _DEFAULT_CONTEXT = (
     "This is a kitchen or restaurant CCTV recording. "
@@ -236,7 +236,7 @@ def _load_kb_from_folder(agent: str, kb_dir: str) -> List[str]:
     paths: List[str] = []
     for pattern in ("*.jpg", "*.jpeg", "*.png"):
         paths.extend(glob.glob(os.path.join(agent_dir, pattern)))
-    paths = sorted(paths)[:3]  # deterministic order, max 3
+    paths = sorted(paths)  # deterministic order, using all available reference images
 
     examples: List[str] = []
     for p in paths:

@@ -209,13 +209,8 @@ def run_pipeline_headless(
             except Exception as _rot_err:
                 logger.warning(f"Auto-rotation detection failed (non-fatal): {_rot_err}")
 
-    # For pork_weighing: save CLAHE-enhanced preview frames before Phase 1
-    if agent == "pork_weighing" and hasattr(pipeline, "save_clahe_preview_frames"):
-        try:
-            report("processing", "Saving CLAHE preview frames...")
-            pipeline.save_clahe_preview_frames(video_path)
-        except Exception as _clahe_err:
-            logger.warning(f"CLAHE preview frames failed (non-fatal): {_clahe_err}")
+    # For pork_weighing: Phase 1 now handles save_clahe_preview_frames internally 
+    # immediately after red-circle detection to ensure circles are visible.
 
     results = {
         "phase1_detections": [],
