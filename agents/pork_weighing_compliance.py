@@ -74,17 +74,17 @@ load_dotenv()
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
 AGENT_FPS                     = 0.5
-AGENT_CONFIDENCE_THRESHOLD    = 0.8
+AGENT_CONFIDENCE_THRESHOLD    = 0.6
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
 AGENT_CLIP_BUFFER_SECONDS     = 5
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 2
 AGENT_IMAGE_QUALITY           = 95
-AGENT_IMAGE_UPSCALE_FACTOR    = 1.0
+AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_PNG_COMPRESSION         = 3   # 0 = no compression, 9 = max compression (default OpenCV = 3)
+AGENT_PNG_COMPRESSION         = 7   # 0 = no compression, 9 = max compression (default OpenCV = 3)
 AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
@@ -99,8 +99,6 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 PHASE1_MODEL_NAME = os.getenv("PHASE1_MODEL_NAME", AGENT_PHASE1_MODEL_NAME)
 PHASE2_MODEL_NAME = os.getenv("PHASE2_MODEL_NAME", AGENT_PHASE2_MODEL_NAME)
-
-# Analysis Mode Settings
 ENABLE_PHASE2 = os.getenv("ENABLE_PHASE2", "true").lower() in ["true", "1", "yes"]
 
 # Analysis Settings
@@ -593,7 +591,7 @@ class PorkWeighingPipeline:
 
         # Unsharp mask strength: result = orig*(1+alpha) - blurred*alpha
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
-        self._sharpen_alpha = 0.8
+        self._sharpen_alpha = 1.0
 
     def cleanup(self):
         """Clean up temporary files."""

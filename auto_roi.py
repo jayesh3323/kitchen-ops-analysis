@@ -114,7 +114,7 @@ _AGENT_VISUAL_CUES = {
 # Larger value → more context added around the detected region.
 # Small objects (scale) need large expansion; wide areas (counter) need smaller.
 _AGENT_MARGIN = {
-    "pork_weighing":  0.8,   # scale is small — expand generously to include display + platform
+    "pork_weighing":  0.3,   # scale is small — expand generously to include display + platform
     "plating_time":   0,     # plating table is large — 0 margin to avoid spilling off-frame
     "serve_time":     0,     # seating area spans wide — 0 margin to keep focus on counter
     "noodle_rotation": 0.4,
