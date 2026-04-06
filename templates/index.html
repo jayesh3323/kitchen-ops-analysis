@@ -79,6 +79,7 @@
             <div class="agent-tabs" style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.5rem;">
                 <button class="btn btn-primary agent-tab active"
                     data-agent="pork_weighing"
+                    data-fps="0.5"
                     data-roi-label="Detect Weighing Scale"
                     data-phase2-label="Scale Reading Verification"
                     data-task-desc="Detects pork placed on the weighing scale, captures the final stable reading, and verifies OCR accuracy against standard portion weights (60 g / 120 g).">
@@ -86,6 +87,7 @@
                 </button>
                 <button class="btn btn-secondary agent-tab"
                     data-agent="plating_time"
+                    data-fps="1.0"
                     data-roi-label="Detect Plating Station"
                     data-phase2-label="Plating Time Verification"
                     data-task-desc="Measures elapsed time from the first ingredient placement to the completed bowl being moved off the plating station.">
@@ -93,6 +95,7 @@
                 </button>
                 <button class="btn btn-secondary agent-tab"
                     data-agent="noodle_rotation"
+                    data-fps="2.0"
                     data-roi-label="Detect Noodle Station"
                     data-phase2-label="Rotation Compliance Check"
                     data-task-desc="Monitors whether the chef performs the required noodle rotation procedure at the cooking station within the compliance window.">
@@ -100,6 +103,7 @@
                 </button>
                 <button class="btn btn-secondary agent-tab"
                     data-agent="serve_time"
+                    data-fps="1.0"
                     data-roi-label="Detect Serving Counter"
                     data-phase2-label="Serve Time Verification"
                     data-task-desc="Tracks average time from bowl ready at the pass to customer pickup, flagging orders that exceed the target serve threshold.">
@@ -107,6 +111,7 @@
                 </button>
                 <button class="btn btn-secondary agent-tab"
                     data-agent="bowl_completion_rate"
+                    data-fps="1.0"
                     data-roi-label="Detect Bowl Assembly Area"
                     data-phase2-label="Completion Rate Verification"
                     data-task-desc="Evaluates whether customers fully consume their ramen (no solid leftovers except soup/green onions), enforcing strict cleanliness standards for returned bowls.">
@@ -191,7 +196,7 @@
                 <div class="form-row" style="margin-top: 0.75rem; align-items: flex-end;">
                     <div class="form-group" style="min-width: 100px; max-width: 140px;">
                         <label for="fps-input">FPS</label>
-                        <input type="number" id="fps-input" value="1" min="0.25" max="5" step="0.25">
+                        <input type="number" id="fps-input" value="0.5" min="0.25" max="5" step="0.25">
                     </div>
                     <div class="form-group" style="min-width: 120px; max-width: 220px;">
                         <label id="phase2-toggle-label">Scale Reading Verification</label>

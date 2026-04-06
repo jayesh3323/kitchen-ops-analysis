@@ -138,6 +138,11 @@ function updateTaskUI(tabEl) {
 
     const descEl = document.getElementById('task-description');
     if (descEl) descEl.textContent = taskDesc;
+
+    const fpsInput = document.getElementById('fps-input');
+    if (fpsInput && tabEl.dataset.fps) {
+        fpsInput.value = tabEl.dataset.fps;
+    }
 }
 
 function handleFormResize() {
