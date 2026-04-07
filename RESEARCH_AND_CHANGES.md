@@ -8,14 +8,8 @@
 
 | # | Change | File(s) | Description | Result |
 |---|--------|---------|-------------|--------|
-| I1 | CLAHE preprocessing on pork ROI crop | `agents/pork_weighing_compliance.py` | Applied CLAHE (clipLimit=2.0, tileGridSize=8×8) on L channel (LAB space) after ROI crop, before upscale. Improves LCD digit contrast without color distortion. | |
-| I2 | CLAHE preview frames saved unconditionally | `agents/pork_weighing_compliance.py` | `save_clahe_preview_frames()` extracts 7–10 evenly spaced frames, applies rotation+crop+CLAHE, saves as PNG to `output_dir/clahe_preview_frames/`. Always runs regardless of whether events are detected. | |
-| I3 | CLAHE preview trigger in pipeline adapter | `pipeline_adapter.py` | Called `save_clahe_preview_frames()` before Phase 1 starts for pork_weighing agent. Non-fatal — wrapped in try/except so pipeline continues if preview fails. | |
-| I4 | Frames endpoint includes CLAHE previews | `main.py` | `/api/jobs/{id}/frames` endpoint now walks `clahe_preview_frames/` first and prefixes filenames with `clahe_preview/`. Ensures dashboard always shows frames even with zero detections. | |
-| I5 | Sequential ROI & Display VLM Pipeline | `auto_roi.py` | Two-step sequential flow (ROI first, then Displays using ROI as context). Dramatically reduces false-positive "food circles". | ✅ Working |
-| I6 | Client-side Verification UI | `app.js`, `index.html` | Dashboard renders Green ROI and Red Display circles for user confirmation. Coordinates saved in client state. | ✅ Working |
-| I7 | Verified Display Propagation | `main.py`, `pork_weighing_compliance.py` | Verified `display_circles` passed to agent via job config. Agent bypasses VLM detection if pre-detected circles provided. | ✅ Working |
-| I8 | Spatial Filtering & Precision Prompts | `auto_roi.py` | Server-side filtering of displays outside ROI. Refined prompts for "green background" LCDs with "VERY TIGHT" boxes. | ✅ Working |
+| I1 | CLAHE preprocessing on pork ROI crop | `agents/pork_weighing_compliance.py` | Applied CLAHE (clipLimit=2.0, tileGridSize=8×8) on L channel (LAB space) after ROI crop, before upscale. Improves LCD digit contrast without color distortion. | ❌ Failed |
+| I2 | Sequential ROI & Display VLM Pipeline | `auto_roi.py` | Two-step sequential flow (ROI first, then Displays using ROI as context). Dramatically reduces false-positive "food circles". |  |
 
 ---
 # Research and Changes Documentation
@@ -57,7 +51,7 @@ These techniques operate on **pixel data before VLM encoding** — no architectu
 
 | # | Technique | Research Source | Expected Gain | Agents | Status | Result |
 |---|-----------|----------------|---------------|--------|--------|--------|
-| CV1 | **Red Circle Visual Prompting** — draw `cv2.circle()` on the exact region the VLM must attend to (red outperforms all other colors/shapes) | [ICCV 2023 — "What does CLIP know about a red circle?"](https://openaccess.thecvf.com/content/ICCV2023/papers/Shtedritski_What_does_CLIP_know_about_a_red_circle_Visual_prompt_ICCV_2023_paper.pdf) | 72–128% relative improvement on localization (keypoint: 42.2%→72% PCK) | All 5 (each circles its key region) | **Implemented (I5-I8)** | ✅ Working |
+| CV1 | **Red Circle Visual Prompting** — draw `cv2.circle()` on the exact region the VLM must attend to (red outperforms all other colors/shapes) | [ICCV 2023 — "What does CLIP know about a red circle?"](https://openaccess.thecvf.com/content/ICCV2023/papers/Shtedritski_What_does_CLIP_know_about_a_red_circle_Visual_prompt_ICCV_2023_paper.pdf) | 72–128% relative improvement on localization (keypoint: 42.2%→72% PCK) | All 5 (each circles its key region) | **Implemented (I5-I8)** |  |
 | CV2 | **Set-of-Mark (SoM) Prompting** — overlay numbered bounding-box labels on semantic regions; prompt references regions by number | [arXiv 2310.11441](https://arxiv.org/abs/2310.11441) | Competitive with fine-tuned SOTA on RefCOCOg zero-shot | plating_time, avg_serve_time, bowl_completion_rate | Not implemented | |
 | CV3 | **Optical Flow Color Overlay** — compute Farneback dense flow between consecutive frames, convert to HSV color map, blend onto RGB frame before encoding | [MDPI Entropy 2022](https://www.mdpi.com/1099-4300/24/7/939); [RPEFlow ICCV 2023](https://arxiv.org/html/2309.15082) | Explicit motion direction cues; VLM can read flow arrows to describe rotation direction | noodle_rotation, plating_time | Not implemented | |
 | CV4 | **Laplacian Variance Frame Filtering** — compute `cv2.Laplacian().var()` per frame; skip frames below threshold (150), use nearest sharp neighbor | [arXiv 2504.13690](https://arxiv.org/html/2504.13690v2); [arXiv 2603.06148](https://arxiv.org/abs/2603.06148) | 5–10 accuracy point recovery (blur causes 8–15pp drop; TextVQA: 57.5%→45% under blur) | All 5 (in `extract_frames()`) | Not implemented | |
