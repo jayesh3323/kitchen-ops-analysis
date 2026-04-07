@@ -28,6 +28,7 @@ const state = {
     videoPath: '',
     serverFilename: null,
     roiCoords: null,             // { x1, y1, x2, y2 } — scale region
+    displayCircles: null,        // [{ x1, y1, x2, y2 }, ...] — scale displays
     timestampCoords: null,       // { x1, y1, x2, y2 } — timestamp region
     timestampFrameB64: null,     // cached frame for timestamp canvas
     recordingDate: null,
@@ -744,6 +745,7 @@ function resetTimestampState() {
 
 function resetROIState() {
     state.roiCoords = null;
+    state.displayCircles = null;
     const badge = $('#roi-display');
     if (badge) badge.style.display = 'none';
     const preview = $('#roi-auto-preview');
@@ -809,6 +811,7 @@ async function autoDetectROI() {
 
         const [x1, y1, x2, y2] = data.roi;
         state.roiCoords = { x1, y1, x2, y2 };
+        state.displayCircles = data.displays || [];
 
         const badge = $('#roi-display');
         if (badge) { badge.style.display = 'inline-flex'; badge.textContent = 'ROI Detected'; }
@@ -936,6 +939,10 @@ async function submitJob() {
         if (state.recordingHour !== null) formData.append('recording_hour', state.recordingHour);
         if (state.recordingDate) formData.append('recording_date', state.recordingDate);
         formData.append('agent', state.selectedAgent);
+        
+        if (state.displayCircles && state.displayCircles.length > 0) {
+            formData.append('display_circles', JSON.stringify(state.displayCircles));
+        }
 
         const phase2Toggle = $('#enable-phase2');
         formData.append('enable_phase2', phase2Toggle ? phase2Toggle.checked : true);

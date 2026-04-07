@@ -345,6 +345,7 @@ class PipelineConfig:
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
+    display_circles: Optional[List[Dict[str, Any]]] = None
     
     def __post_init__(self):
         if self.openai_api_key is None:
@@ -602,9 +603,22 @@ class PorkWeighingPipeline:
         self._sharpen_alpha = 1.0
 
         # Red-circle visual prompting: list of (cx, cy, radius) in crop-space pixels.
-        # Populated once by detect_display_circles() before Phase 1 frame extraction.
-        # None = not yet detected; [] = detection ran but found nothing.
         self.display_circles: Optional[List[Tuple[int, int, int]]] = None
+        
+        # If display circles were provided in config, convert them to crop-space now
+        if config.display_circles and self.roi:
+            self.display_circles = []
+            rx1, ry1, rx2, ry2 = self.roi
+            for d in config.display_circles:
+                dx1, dy1, dx2, dy2 = d['x1'], d['y1'], d['x2'], d['y2']
+                cx_full = (dx1 + dx2) / 2
+                cy_full = (dy1 + dy2) / 2
+                # Convert to crop-space
+                cx = int(cx_full - rx1)
+                cy = int(cy_full - ry1)
+                r = int(max(dx2 - dx1, dy2 - dy1) / 2 * 1.05) # Adding 5% padding
+                self.display_circles.append((cx, cy, r))
+            logger.info(f"Initialized with {len(self.display_circles)} pre-detected display circles")
 
     def cleanup(self):
         """Clean up temporary files."""
@@ -876,6 +890,10 @@ class PorkWeighingPipeline:
             self.display_circles = []
             return
 
+        if self.display_circles is not None:
+            logger.info("Using pre-detected display circles (skipping VLM call)")
+            return
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             logger.warning("detect_display_circles: cannot open video")
@@ -1003,7 +1021,7 @@ class PorkWeighingPipeline:
         return annotated
 
     def apply_clahe(self, frame: np.ndarray) -> np.ndarray:
-        """Enhance frame for OCR legibility: CLAHE then unsharp-mask sharpening.
+        """Enhance frame for OCR legibility:     then unsharp-mask sharpening.
 
         Comment out either block independently to disable that step.
         """

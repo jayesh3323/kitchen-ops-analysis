@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 from PIL import Image as PILImage
+from openai import OpenAI
 
 import config as app_config
 
@@ -160,6 +161,37 @@ _VLM_PROMPT_TEMPLATE = (
     "- (x2-x1)*(y2-y1) must be at least 0.02 (box must cover at least 2% of the image)"
 )
 
+_PORK_ROI_PROMPT = (
+    "You are analyzing a single CCTV frame from a kitchen weighing station.\n"
+    "Identify a single, tight bounding box (GREEN ROI) that encloses ONLY the weighing scale apparatus "
+    "(the digital displays and the immediate platform/bowl-holder area).\n"
+    "Do NOT include large amounts of surrounding empty counter space or other tools.\n\n"
+    "Return ONLY a JSON object:\n"
+    "{\n"
+    '  "found": true,\n'
+    '  "roi": {"x1": <0.0-1.0>, "y1": <0.0-1.0>, "x2": <0.0-1.0>, "y2": <0.0-1.0>},\n'
+    '  "confidence": <0.0-1.0>,\n'
+    '  "reasoning": "<one sentence>"\n'
+    "}\n"
+    "Use normalized fractions (0.0 to 1.0) relative to image width/height."
+)
+
+_PORK_DISPLAY_PROMPT_TEMPLATE = (
+    "You are analyzing a CCTV frame from a kitchen weighing station.\n"
+    "We have already identified the primary scale area (ROI) at: {{ \"x1\": {x1}, \"y1\": {y1}, \"x2\": {x2}, \"y2\": {y2} }}.\n\n"
+    "Your task is to identify EACH digital readout screen (LCD/LED showing numeric weight) within or on this scale.\n"
+    "CRITICAL: Look for small rectangular screens on the scale base, often with a green/backlit background.\n"
+    "DO NOT confuse bowls, pork, or plates with the scale displays.\n\n"
+    "Return ONLY a JSON object:\n"
+    "{\n"
+    '  "displays": [\n'
+    '    {"x1": <0.0-1.0>, "y1": <0.0-1.0>, "x2": <0.0-1.0>, "y2": <0.0-1.0>}, ...\n'
+    '  ],\n'
+    '  "reasoning": "<one sentence>"\n'
+    "}\n"
+    "Coordinates must be normalized fractions of the FULL IMAGE width/height."
+)
+
 
 # =============================================================================
 # Frame extraction helper
@@ -272,8 +304,11 @@ def detect_roi_vlm(
                        from the KB folder.  Prepended as few-shot visual context.
 
     Returns:
-        ((x1, y1, x2, y2), confidence) or (None, 0.0) on failure/not-found.
+        ((x1, y1, x2, y2), confidence, displays) or (None, 0.0, []) on failure/not-found.
     """
+    if agent == "pork_weighing":
+        return _detect_combined_pork_vlm(frame_base64, image_width, image_height)
+
     agent_context = _AGENT_CONTEXT.get(agent, _DEFAULT_CONTEXT)
     visual_cue = _AGENT_VISUAL_CUES.get(agent, _DEFAULT_VISUAL_CUE)
     prompt = _VLM_PROMPT_TEMPLATE.format(
@@ -381,11 +416,101 @@ def detect_roi_vlm(
             f"→ pixels ({x1},{y1})->({x2},{y2}) | area={norm_area*100:.1f}% | "
             f"conf={confidence:.2f} | {result.get('reasoning', '')}"
         )
-        return (x1, y1, x2, y2), confidence
+        return (x1, y1, x2, y2), confidence, []
 
     except Exception as e:
         logger.error(f"VLM ROI detection failed: {type(e).__name__}: {e}", exc_info=True)
-        return None, 0.0
+        return None, 0.0, []
+
+
+def _detect_combined_pork_vlm(
+    frame_base64: str,
+    image_width: int,
+    image_height: int,
+) -> Tuple[Optional[Tuple[int, int, int, int]], float, List[dict]]:
+    """Sequential detection for pork weighing using GPT-4o-mini (ROI then Displays)."""
+    try:
+        client = OpenAI(api_key=app_config.OPENAI_API_KEY)
+        
+        # ── Step 1: Detect ROI ────────────────────────────────────────────────
+        logger.info("Pork Weighing ROI Detection (Step 1/2)...")
+        roi_resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _PORK_ROI_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_base64}", "detail": "high"}},
+                ],
+            }],
+            response_format={"type": "json_object"},
+            max_tokens=300,
+        )
+
+        roi_raw = roi_resp.choices[0].message.content or "{}"
+        roi_result = json.loads(roi_raw)
+
+        if not roi_result.get("found") or "roi" not in roi_result:
+            logger.warning("VLM Step 1: ROI not found")
+            return None, 0.0, []
+
+        roi_data = roi_result["roi"]
+        nx1, ny1, nx2, ny2 = roi_data["x1"], roi_data["y1"], roi_data["x2"], roi_data["y2"]
+        
+        # Norm coordinates verification and conversion
+        nx1, nx2 = max(0.0, float(nx1)), min(1.0, float(nx2))
+        ny1, ny2 = max(0.0, float(ny1)), min(1.0, float(ny2))
+        
+        x1, y1 = int(nx1 * image_width), int(ny1 * image_height)
+        x2, y2 = int(nx2 * image_width), int(ny2 * image_height)
+        roi_bbox = (x1, y1, x2, y2)
+        confidence = float(roi_result.get("confidence", 0.8))
+
+        logger.info(f"VLM Step 1 ROI: ({x1},{y1})->({x2},{y2}) conf={confidence:.2f}")
+
+        # ── Step 2: Detect Displays within ROI ──────────────────────────────
+        logger.info("Pork Weighing Display Detection (Step 2/2)...")
+        display_prompt = _PORK_DISPLAY_PROMPT_TEMPLATE.format(
+            x1=round(nx1, 3), y1=round(ny1, 3), x2=round(nx2, 3), y2=round(ny2, 3)
+        )
+        
+        disp_resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": display_prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_base64}", "detail": "high"}},
+                ],
+            }],
+            response_format={"type": "json_object"},
+            max_tokens=400,
+        )
+
+        disp_raw = disp_resp.choices[0].message.content or "{}"
+        disp_result = json.loads(disp_raw)
+        displays = disp_result.get("displays", [])
+
+        # Convert display coords to pixels (Step 2 returns full-frame norm coords in this implementation)
+        final_displays = []
+        for d in displays:
+            dx1, dy1, dx2, dy2 = d["x1"], d["y1"], d["x2"], d["y2"]
+            # Convert norm to pixels
+            px1, py1 = int(dx1 * image_width), int(dy1 * image_height)
+            px2, py2 = int(dx2 * image_width), int(dy2 * image_height)
+
+            # Sanity check: is it inside the detected ROI (plus 5% margin)?
+            mx = (x2 - x1) * 0.05
+            my = (y2 - y1) * 0.05
+            if (x1 - mx <= px1 <= x2 + mx and y1 - my <= py1 <= y2 + my):
+                final_displays.append({"x1": px1, "y1": py1, "x2": px2, "y2": py2})
+
+        logger.info(f"VLM Step 2: {len(final_displays)} displays found (filtered from {len(displays)})")
+        return roi_bbox, confidence, final_displays
+
+    except Exception as e:
+        logger.error(f"Sequential VLM detection failed: {e}", exc_info=True)
+        return None, 0.0, []
 
 
 # =============================================================================
@@ -396,12 +521,13 @@ def _draw_roi_annotation(
     frame: np.ndarray,
     bbox: Tuple[int, int, int, int],
     confidence: float,
+    displays: List[dict] = None,
 ) -> bytes:
-    """Draw the detected ROI rectangle on the frame and return JPEG bytes."""
+    """Draw the detected ROI rectangle and optional display circles on the frame."""
     annotated = frame.copy()
     x1, y1, x2, y2 = bbox
 
-    # Colour by confidence: green ≥70%, amber 40–70%, red <40%
+    # 1. Draw Green ROI Box
     if confidence >= 0.70:
         color = (0, 200, 100)
     elif confidence >= 0.40:
@@ -410,6 +536,19 @@ def _draw_roi_annotation(
         color = (50, 50, 220)
 
     cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
+
+    # 2. Draw Red Display Circles
+    if displays:
+        for d in displays:
+            dx1, dy1, dx2, dy2 = d["x1"], d["y1"], d["x2"], d["y2"]
+            cx = (dx1 + dx2) // 2
+            cy = (dy1 + dy2) // 2
+            # Use a tighter radius since we ask VLM for VERY TIGHT boxes
+            r = max(dx2 - dx1, dy2 - dy1) // 2
+            r = int(r * 1.05) 
+            cv2.circle(annotated, (cx, cy), r, (0, 0, 255), 2)
+            cv2.putText(annotated, "Display", (dx1, max(dy1 - 5, 15)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
     label = f"AI {int(confidence * 100)}%"
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -465,6 +604,7 @@ def auto_detect_roi(
     Returns:
         {
             "roi": [x1, y1, x2, y2] or None,
+            "displays": list or None,
             "confidence": float,
             "method": "vlm" | "failed",
             "annotated_frame": bytes (JPEG) or None,
@@ -480,7 +620,7 @@ def auto_detect_roi(
     agent = _ALIASES.get(agent, agent)
 
     _failed = {
-        "roi": None, "confidence": 0.0, "method": "failed",
+        "roi": None, "displays": [], "confidence": 0.0, "method": "failed",
         "annotated_frame": None, "frame_w": 0, "frame_h": 0,
     }
 
@@ -507,12 +647,12 @@ def auto_detect_roi(
         )
 
         # ── Run VLM on each frame, collect results ────────────────────────────
-        results = []  # list of (bbox, confidence, frame, w, h)
+        results = []  # list of (bbox, confidence, frame, w, h, displays)
         for i, frame in enumerate(frames):
             b64, w, h = _frame_to_base64(frame)
-            bbox, conf = detect_roi_vlm(b64, w, h, agent=agent, kb_images=kb_images)
+            bbox, conf, displays = detect_roi_vlm(b64, w, h, agent=agent, kb_images=kb_images)
             if bbox is not None:
-                results.append((bbox, conf, frame, w, h))
+                results.append((bbox, conf, frame, w, h, displays))
                 logger.info(f"Frame {i+1}/{len(frames)}: found ROI conf={conf:.2f}")
             else:
                 logger.info(f"Frame {i+1}/{len(frames)}: no ROI found")
@@ -522,7 +662,7 @@ def auto_detect_roi(
             return _failed
 
         # ── Pick the result with the highest confidence ───────────────────────
-        best_bbox, best_conf, best_frame, best_w, best_h = max(results, key=lambda r: r[1])
+        best_bbox, best_conf, best_frame, best_w, best_h, best_displays = max(results, key=lambda r: r[1])
         x1, y1, x2, y2 = best_bbox
 
         # ── Expand bbox with per-agent margins (fraction of bbox dimension) ───
@@ -539,10 +679,11 @@ def auto_detect_roi(
             f"(from {len(results)}/{len(frames)} frames that found a region)"
         )
 
-        annotated_bytes = _draw_roi_annotation(best_frame, (x1, y1, x2, y2), best_conf)
+        annotated_bytes = _draw_roi_annotation(best_frame, (x1, y1, x2, y2), best_conf, best_displays)
 
         return {
             "roi": [x1, y1, x2, y2],
+            "displays": best_displays,
             "confidence": round(best_conf, 3),
             "method": "vlm",
             "annotated_frame": annotated_bytes,

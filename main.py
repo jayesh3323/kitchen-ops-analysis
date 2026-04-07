@@ -191,6 +191,7 @@ async def create_job(
     recording_hour: Optional[int] = Form(None),
     recording_date: Optional[str] = Form(None),
     agent: Optional[str] = Form(None),
+    display_circles: Optional[str] = Form(None),
     advanced_config: Optional[str] = Form(None),
     original_filename: Optional[str] = Form(None),
 ):
@@ -252,6 +253,13 @@ async def create_job(
             "enable_phase2": enable_phase2,
             "fps": fps or app_config.FPS,
         }
+        
+        if display_circles:
+            try:
+                # Expecting a JSON list of dicts: [{"x1":.., "y1":.., "x2":.., "y2":..}, ...]
+                job_config["display_circles"] = json.loads(display_circles)
+            except Exception as e:
+                logger.warning(f"Failed to parse display_circles: {e}")
         
         if advanced_config:
             try:
@@ -850,6 +858,7 @@ async def auto_detect_roi_endpoint(
 
         return JSONResponse({
             "roi": result["roi"],
+            "displays": result.get("displays", []),
             "confidence": result["confidence"],
             "method": result["method"],
             "annotated_frame": base64.b64encode(result["annotated_frame"]).decode("utf-8")

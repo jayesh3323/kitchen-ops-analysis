@@ -14,6 +14,38 @@
 | I4 | Frames endpoint includes CLAHE previews | `main.py` | `/api/jobs/{id}/frames` endpoint now walks `clahe_preview_frames/` first and prefixes filenames with `clahe_preview/`. Ensures dashboard always shows frames even with zero detections. | |
 
 ---
+# Research and Changes Documentation
+
+## 2026-04-07: Optimizing Pork Weighing ROI & Display Detection
+
+### Objective
+Improve the accuracy of scale ROI detection and digital display (red circle) localization for the pork weighing compliance pipeline.
+
+### Changes & Research Observations
+
+#### 1. Unified vs. Sequential VLM Detection
+- **Initial Approach:** A single VLM call to GPT-4o-mini attempted to find both the Green ROI and Red Display Circles.
+- **Problem:** When the image contained multiple similar objects (bowls, food), the VLM often confused food items for display panels, especially if the initial ROI wasn't tight enough.
+- **Solution:** Switched to a **Sequential Two-Step Detection** flow.
+    - **Step 1:** Detect the primary weighing scale apparatus (ROI) on the full frame.
+    - **Step 2:** Provide the detected ROI coordinates as context to a second VLM call on the same frame specifically focused on locating display panels within that ROI.
+- **Benefit:** By forcing the model to explicitly identify the ROI first and then using that ROI as a spatial constraint in the next request, the rate of "food circles" (misidentified displays) dropped significantly.
+
+#### 2. Visual Prompting Clarity
+- **Prompt Refinement:** Added "green background" to the description of digital displays to help the model distinguish between LCD readouts and bowl interiors.
+- **Precision Instructions:** Instructed the model to provide **"VERY TIGHT"** bounding boxes for both regions to avoid capturing surrounding noise.
+
+#### 3. Spatial Filtering
+- Implemented a server-side **Sanity Check** that filters out any display coordinates detected far outside the scale ROI. This acts as a safety gate for cases where the VLM might still hallucinate a display on a faraway object.
+
+#### 4. UI Rendering Adjustments
+- Reduced the circle radius padding from **20% to 5%**.
+- Synchronized the `_AGENT_MARGIN` in `auto_roi.py` and the pipeline radius logic in `pork_weighing_compliance.py` to ensure high precision in the final visual verification.
+
+### Results
+The sequential detection flow provides a much higher "hit rate" for the actual digital screens. The tight focus on the scale apparatus ensures that visual prompts in Phase 1 and Phase 2 are centered exactly on the weight readout, leading to more reliable OCR results.
+
+---
 
 ## CV Preprocessing Research (Image-Level Techniques)
 
