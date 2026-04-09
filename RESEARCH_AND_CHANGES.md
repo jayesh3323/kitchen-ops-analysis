@@ -12,38 +12,6 @@
 | I2 | Sequential ROI & Display VLM Pipeline | `auto_roi.py` | Two-step sequential flow (ROI first, then Displays using ROI as context). Dramatically reduces false-positive "food circles". |  |
 
 ---
-# Research and Changes Documentation
-
-## 2026-04-07: Optimizing Pork Weighing ROI & Display Detection
-
-### Objective
-Improve the accuracy of scale ROI detection and digital display (red circle) localization for the pork weighing compliance pipeline.
-
-### Changes & Research Observations
-
-#### 1. Unified vs. Sequential VLM Detection
-- **Initial Approach:** A single VLM call to GPT-4o-mini attempted to find both the Green ROI and Red Display Circles.
-- **Problem:** When the image contained multiple similar objects (bowls, food), the VLM often confused food items for display panels, especially if the initial ROI wasn't tight enough.
-- **Solution:** Switched to a **Sequential Two-Step Detection** flow.
-    - **Step 1:** Detect the primary weighing scale apparatus (ROI) on the full frame.
-    - **Step 2:** Provide the detected ROI coordinates as context to a second VLM call on the same frame specifically focused on locating display panels within that ROI.
-- **Benefit:** By forcing the model to explicitly identify the ROI first and then using that ROI as a spatial constraint in the next request, the rate of "food circles" (misidentified displays) dropped significantly.
-
-#### 2. Visual Prompting Clarity
-- **Prompt Refinement:** Added "green background" to the description of digital displays to help the model distinguish between LCD readouts and bowl interiors.
-- **Precision Instructions:** Instructed the model to provide **"VERY TIGHT"** bounding boxes for both regions to avoid capturing surrounding noise.
-
-#### 3. Spatial Filtering
-- Implemented a server-side **Sanity Check** that filters out any display coordinates detected far outside the scale ROI. This acts as a safety gate for cases where the VLM might still hallucinate a display on a faraway object.
-
-#### 4. UI Rendering Adjustments
-- Reduced the circle radius padding from **20% to 5%**.
-- Synchronized the `_AGENT_MARGIN` in `auto_roi.py` and the pipeline radius logic in `pork_weighing_compliance.py` to ensure high precision in the final visual verification.
-
-### Results
-The sequential detection flow provides a much higher "hit rate" for the actual digital screens. The tight focus on the scale apparatus ensures that visual prompts in Phase 1 and Phase 2 are centered exactly on the weight readout, leading to more reliable OCR results.
-
----
 
 ## CV Preprocessing Research (Image-Level Techniques)
 
@@ -51,7 +19,7 @@ These techniques operate on **pixel data before VLM encoding** — no architectu
 
 | # | Technique | Research Source | Expected Gain | Agents | Status | Result |
 |---|-----------|----------------|---------------|--------|--------|--------|
-| CV1 | **Red Circle Visual Prompting** — draw `cv2.circle()` on the exact region the VLM must attend to (red outperforms all other colors/shapes) | [ICCV 2023 — "What does CLIP know about a red circle?"](https://openaccess.thecvf.com/content/ICCV2023/papers/Shtedritski_What_does_CLIP_know_about_a_red_circle_Visual_prompt_ICCV_2023_paper.pdf) | 72–128% relative improvement on localization (keypoint: 42.2%→72% PCK) | All 5 (each circles its key region) | **Implemented (I5-I8)** |  |
+| CV1 | **Red Circle Visual Prompting** — draw `cv2.circle()` on the exact region the VLM must attend to (red outperforms all other colors/shapes) | [ICCV 2023 — "What does CLIP know about a red circle?"](https://openaccess.thecvf.com/content/ICCV2023/papers/Shtedritski_What_does_CLIP_know_about_a_red_circle_Visual_prompt_ICCV_2023_paper.pdf) | 72–128% relative improvement on localization (keypoint: 42.2%→72% PCK) | All 5 (each circles its key region) | **Implemented (I2)** |  |
 | CV2 | **Set-of-Mark (SoM) Prompting** — overlay numbered bounding-box labels on semantic regions; prompt references regions by number | [arXiv 2310.11441](https://arxiv.org/abs/2310.11441) | Competitive with fine-tuned SOTA on RefCOCOg zero-shot | plating_time, avg_serve_time, bowl_completion_rate | Not implemented | |
 | CV3 | **Optical Flow Color Overlay** — compute Farneback dense flow between consecutive frames, convert to HSV color map, blend onto RGB frame before encoding | [MDPI Entropy 2022](https://www.mdpi.com/1099-4300/24/7/939); [RPEFlow ICCV 2023](https://arxiv.org/html/2309.15082) | Explicit motion direction cues; VLM can read flow arrows to describe rotation direction | noodle_rotation, plating_time | Not implemented | |
 | CV4 | **Laplacian Variance Frame Filtering** — compute `cv2.Laplacian().var()` per frame; skip frames below threshold (150), use nearest sharp neighbor | [arXiv 2504.13690](https://arxiv.org/html/2504.13690v2); [arXiv 2603.06148](https://arxiv.org/abs/2603.06148) | 5–10 accuracy point recovery (blur causes 8–15pp drop; TextVQA: 57.5%→45% under blur) | All 5 (in `extract_frames()`) | Not implemented | |
