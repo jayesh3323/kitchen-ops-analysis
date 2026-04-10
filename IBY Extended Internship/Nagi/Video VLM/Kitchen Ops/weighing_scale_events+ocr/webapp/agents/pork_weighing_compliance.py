@@ -60,10 +60,11 @@ except ImportError as e:
     print("Please install requirements: pip install openai opencv-python-headless numpy pillow google-generativeai python-dotenv pandas")
     sys.exit(1)
 
-# ── Real-ESRGAN soft-import (optional; skipped gracefully if not installed) ──
+# ── Real-ESRGAN soft-import via spandrel (no basicsr / Python-3.14-safe) ────
+# Install with: pip install spandrel torch
 try:
-    from realesrgan import RealESRGANer as _RealESRGANer
-    from basicsr.archs.rrdbnet_arch import RRDBNet as _RRDBNet
+    import torch as _torch
+    from spandrel import ModelLoader as _SpandrelModelLoader
     _REALESRGAN_AVAILABLE = True
 except ImportError:
     _REALESRGAN_AVAILABLE = False
@@ -1061,7 +1062,7 @@ class PorkWeighingPipeline:
     # -------------------------------------------------------------------------
 
     def _ensure_sr_model(self) -> bool:
-        """Lazy-initialize Real-ESRGAN 2× model. Returns True when model is ready."""
+        """Lazy-initialize Real-ESRGAN 2× model via spandrel. Returns True when ready."""
         if not _REALESRGAN_AVAILABLE:
             return False
         if self._sr_model is not None:
@@ -1077,7 +1078,6 @@ class PorkWeighingPipeline:
         weights_path = next((p for p in candidates if os.path.exists(p)), None)
 
         if weights_path is None:
-            # Download from official Real-ESRGAN GitHub release
             download_target = candidates[1]
             os.makedirs(_cache_dir, exist_ok=True)
             _url = (
@@ -1095,21 +1095,14 @@ class PorkWeighingPipeline:
                 return False
 
         try:
-            model = _RRDBNet(
-                num_in_ch=3, num_out_ch=3,
-                num_feat=64, num_block=23, num_grow_ch=32,
-                scale=2,
+            descriptor = _SpandrelModelLoader().load_from_path(weights_path)
+            self._sr_model = descriptor.model.eval()
+            self._sr_device = _torch.device("cuda" if _torch.cuda.is_available() else "cpu")
+            self._sr_model.to(self._sr_device)
+            logger.info(
+                f"Real-ESRGAN 2× model ready via spandrel "
+                f"(device={self._sr_device}; digit SR active for Phase 2 frames)."
             )
-            self._sr_model = _RealESRGANer(
-                scale=2,
-                model_path=weights_path,
-                model=model,
-                tile=256,
-                tile_pad=10,
-                pre_pad=0,
-                half=False,
-            )
-            logger.info("Real-ESRGAN 2× model ready (digit SR active for Phase 2 frames).")
             return True
         except Exception as exc:
             logger.warning(f"Real-ESRGAN model init failed ({exc}); digit SR skipped.")
@@ -1155,17 +1148,26 @@ class PorkWeighingPipeline:
                 continue
 
             patch_bgr = frame[y1:y2, x1:x2]
-            patch_rgb = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB)
 
             try:
-                sr_rgb, _ = self._sr_model.enhance(patch_rgb, outscale=2)
+                # BGR uint8 HWC → RGB float32 CHW → add batch dim
+                import numpy as np
+                patch_rgb = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                tensor = _torch.from_numpy(patch_rgb.transpose(2, 0, 1)).unsqueeze(0)
+                tensor = tensor.to(self._sr_device)
+
+                with _torch.no_grad():
+                    sr_tensor = self._sr_model(tensor)
+
+                # Back to BGR uint8 HWC, clamped to [0, 1]
+                sr_np = sr_tensor.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+                sr_bgr = cv2.cvtColor((sr_np * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
             except Exception as exc:
                 logger.warning(f"Real-ESRGAN enhance failed on digit patch: {exc}")
                 continue
 
             # Resize the 2× SR output back to the original patch dimensions
             # (keeps the overall frame size fixed while leveraging SR's denoising)
-            sr_bgr = cv2.cvtColor(sr_rgb, cv2.COLOR_RGB2BGR)
             ph, pw = patch_bgr.shape[:2]
             sr_resized = cv2.resize(sr_bgr, (pw, ph), interpolation=cv2.INTER_LANCZOS4)
             result[y1:y2, x1:x2] = sr_resized
