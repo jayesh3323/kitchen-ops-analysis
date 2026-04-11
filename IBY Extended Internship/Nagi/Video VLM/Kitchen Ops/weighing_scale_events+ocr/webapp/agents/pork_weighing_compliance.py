@@ -1113,13 +1113,13 @@ class PorkWeighingPipeline:
             return False
 
     def _apply_digit_sr(self, frame: np.ndarray) -> np.ndarray:
-        """Apply Real-ESRGAN 4× SR to the tight digit sub-crop, then paste back.
+        """Apply Real-ESRGAN 4× SR to a widened digit sub-crop, then paste back.
 
-        Extracts each display bounding box (derived from self.display_circles),
-        upscales it 4× with Real-ESRGAN, and Lanczos-downsamples the SR result
-        back to the original patch size before pasting. The net effect is
-        AI-quality denoising + sharpening specifically over the digit region,
-        producing a cleaner signal for the VLM OCR pass in Phase 2.
+        Extracts each display bounding box (derived from self.display_circles)
+        expanded by _CROP_EXPAND (1.5×) to include the surrounding bezel and
+        unit label, upscales 4× with Real-ESRGAN, and Lanczos-downsamples the
+        SR result back to the original patch size before pasting. The wider
+        crop gives the model more context, improving digit edge reconstruction.
 
         Returns the frame unchanged if:
         - Real-ESRGAN is not installed / weights unavailable
@@ -1135,12 +1135,17 @@ class PorkWeighingPipeline:
         scale_x = fw / ref_w if ref_w else 1.0
         scale_y = fh / ref_h if ref_h else 1.0
 
+        # Expand the digit crop beyond the bare circle radius so ESRGAN has
+        # more surrounding context (bezel, unit label).  1.5× gives ~50% extra
+        # padding on each side without pulling in unrelated background.
+        _CROP_EXPAND = 1.5
+
         result = frame.copy()
         for cx, cy, radius in self.display_circles:
             # Map circle centre + radius to current frame coordinate space
             scx = int(cx * scale_x)
             scy = int(cy * scale_y)
-            sr  = int(radius * max(scale_x, scale_y))
+            sr  = int(radius * max(scale_x, scale_y) * _CROP_EXPAND)
 
             # Tight bounding box; clamp to frame bounds
             x1 = max(0, scx - sr)
