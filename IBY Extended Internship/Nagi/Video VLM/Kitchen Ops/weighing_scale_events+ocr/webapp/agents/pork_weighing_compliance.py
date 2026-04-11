@@ -57,7 +57,7 @@ try:
     import pandas as pd
 except ImportError as e:
     print(f"Missing required package: {e}")
-    print("Please install requirements: pip install openai opencv-python-headless numpy pillow google-generativeai python-dotenv pandas")
+    print("Please install requirements: pip install openai opencv-python-headless numpy pillow google-generativeai python-dotenv pandas spandrel torch")
     sys.exit(1)
 
 # ── Real-ESRGAN soft-import via spandrel (no basicsr / Python-3.14-safe) ────
@@ -98,7 +98,8 @@ AGENT_IMAGE_UPSCALE_FACTOR    = 2.5
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
-AGENT_PNG_COMPRESSION         = 5   # 0 = no compression, 9 = max compression (default OpenCV = 3)
+AGENT_PNG_COMPRESSION         = 3   # 0 = no compression, 9 = max compression; Phase 1 uses 3
+AGENT_PHASE2_PNG_COMPRESSION  = 0   # lossless for Phase 2 (ESRGAN output should not be re-compressed)
 AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 270
@@ -131,6 +132,7 @@ IMAGE_FORMAT            = os.getenv("IMAGE_FORMAT", AGENT_IMAGE_FORMAT).upper()
 PHASE2_IMAGE_FORMAT     = AGENT_PHASE2_IMAGE_FORMAT # always "PNG" — not env-overridable for this task
 IMAGE_INTERPOLATION     = os.getenv("IMAGE_INTERPOLATION", AGENT_IMAGE_INTERPOLATION).upper()
 PNG_COMPRESSION         = int(os.getenv("PNG_COMPRESSION", str(AGENT_PNG_COMPRESSION)))
+PHASE2_PNG_COMPRESSION  = int(os.getenv("PHASE2_PNG_COMPRESSION", str(AGENT_PHASE2_PNG_COMPRESSION)))
 # Cropping / Rotation
 ENABLE_CROPPING = os.getenv("ENABLE_CROPPING", str(AGENT_ENABLE_CROPPING)).lower() == "true"
 ROTATION_ANGLE  = int(os.getenv("ROTATION_ANGLE", str(AGENT_ROTATION_ANGLE)))
@@ -356,6 +358,7 @@ class PipelineConfig:
     phase2_image_format: str = PHASE2_IMAGE_FORMAT
     image_interpolation: str = IMAGE_INTERPOLATION
     png_compression: int = PNG_COMPRESSION
+    phase2_png_compression: int = PHASE2_PNG_COMPRESSION
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -1046,14 +1049,14 @@ class PorkWeighingPipeline:
         Comment out either block independently to disable that step.
         """
         #── CLAHE: boost local contrast on L channel ──────────────────────────
-        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        enhanced_l = self._clahe.apply(l)
-        frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
+        # lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        # l, a, b = cv2.split(lab)
+        # enhanced_l = self._clahe.apply(l)
+        # frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
 
         #── Unsharp mask: suppress noise then add back clean edges ────────────
-        blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
-        frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
+        # blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
+        # frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
 
         return frame
 
@@ -1223,12 +1226,61 @@ class PorkWeighingPipeline:
         cap.release()
         logger.info(f"Saved {saved} CLAHE preview frames to {out_dir}")
 
-    def _compress_frame(self, frame: np.ndarray, format_override: Optional[str] = None) -> str:
-        """Compress frame and convert to base64 using configured format (PNG or JPEG)."""
+    def _apply_sr_full_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Apply Real-ESRGAN 2× SR to the entire prepared frame (Phase 2).
+
+        Unlike _apply_digit_sr (which patches only the digit sub-crop and pastes
+        back at the original size), this method upscales the whole frame with
+        Real-ESRGAN and returns the 2× output directly.  The larger, AI-denoised
+        frame is then encoded as lossless PNG (compression=0) for Phase 2 analysis.
+
+        Returns frame unchanged if Real-ESRGAN is unavailable or fails.
+        """
+        if not self._ensure_sr_model():
+            return frame
+
+        try:
+            import numpy as np
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            tensor = _torch.from_numpy(frame_rgb.transpose(2, 0, 1)).unsqueeze(0)
+            tensor = tensor.to(self._sr_device)
+
+            with _torch.no_grad():
+                sr_tensor = self._sr_model(tensor)
+
+            sr_np = sr_tensor.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+            sr_bgr = cv2.cvtColor((sr_np * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+            logger.debug(
+                f"Full-frame ESRGAN: {frame.shape[1]}×{frame.shape[0]} → "
+                f"{sr_bgr.shape[1]}×{sr_bgr.shape[0]}"
+            )
+            return sr_bgr
+        except Exception as exc:
+            logger.warning(f"Full-frame ESRGAN failed ({exc}); using original frame.")
+            return frame
+
+    def _compress_frame(
+        self,
+        frame: np.ndarray,
+        format_override: Optional[str] = None,
+        png_compression_override: Optional[int] = None,
+    ) -> str:
+        """Compress frame and convert to base64 using configured format (PNG or JPEG).
+
+        Args:
+            frame: BGR numpy array to encode.
+            format_override: Force "PNG" or "JPEG" regardless of config.
+            png_compression_override: Override PNG compression level (0–9).
+                0 = lossless/no compression, 9 = max compression.
+                Defaults to self.config.png_compression when None.
+        """
         image_format = format_override.upper() if format_override else self.config.image_format
 
         if image_format == "PNG":
-            compression = getattr(self.config, 'png_compression', PNG_COMPRESSION)
+            if png_compression_override is not None:
+                compression = png_compression_override
+            else:
+                compression = getattr(self.config, 'png_compression', PNG_COMPRESSION)
             _, buf = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         else:
             quality = getattr(self.config, 'image_quality', IMAGE_QUALITY)
@@ -1308,8 +1360,15 @@ class PorkWeighingPipeline:
             if current_time >= next_extract_time:
                 rotated = self.rotate_frame(frame)
                 prepared = self.prepare_frame_for_analysis(rotated)
-                prepared = self._apply_digit_sr(prepared)  # 2× SR on tight digit sub-crop
-                base64_frame = self._compress_frame(prepared, format_override=self.config.phase2_image_format)
+                # Full-frame ESRGAN 2× SR — increases resolution of the whole
+                # prepared frame rather than only the digit sub-crop.
+                prepared = self._apply_sr_full_frame(prepared)
+                # Encode as lossless PNG (compression=0) to preserve ESRGAN detail.
+                base64_frame = self._compress_frame(
+                    prepared,
+                    format_override=self.config.phase2_image_format,
+                    png_compression_override=self.config.phase2_png_compression,
+                )
                 frames.append((current_time, base64_frame))
                 next_extract_time += time_interval
 
@@ -1384,18 +1443,18 @@ class PorkWeighingPipeline:
                 response_format={"type": "json_object"}
             )
             
-            raw_content = response.choices[0].message.content
+            raw_content = response.choices[0].message.content or "{}"
+            if raw_content.startswith("```"):
+                raw_content = raw_content.split("```")[1].lstrip("json").strip()
+            
             logger.info("=" * 60)
             logger.info(f"[DEBUG] BATCH {batch.batch_id} - RAW API RESPONSE:")
             logger.info(f"{raw_content}")
             logger.info("=" * 60)
-            print(f"\n{'=' * 60}")
-            print(f"[DEBUG] BATCH {batch.batch_id} - RAW API RESPONSE:")
-            print(f"{raw_content}")
-            print(f"{'=' * 60}\n")
             self.token_usage["phase1_raw_responses"].append(
                 f"=== Batch {batch.batch_id} ===\n{raw_content}"
             )
+            
             result = json.loads(raw_content)
             if not isinstance(result, dict):
                 # If Gemini/GPT returns a list instead of a dict with a "detections" key
@@ -1466,9 +1525,17 @@ class PorkWeighingPipeline:
                     # Handle None values explicitly (API may return null for missing fields)
                     raw_start = det.get("start_time")
                     raw_end = det.get("end_time")
-                    start_time = float(raw_start) if raw_start is not None else 0.0
-                    end_time = float(raw_end) if raw_end is not None else 0.0
-                    scale = det.get("scale", "").lower() if det.get("scale") else None
+                    
+                    def safe_float(val, default=0.0):
+                        try:
+                            return float(val) if val is not None else default
+                        except (ValueError, TypeError):
+                            return default
+
+                    start_time = safe_float(raw_start)
+                    end_time = safe_float(raw_end)
+                    scale = str(det.get("scale", "")).lower() if det.get("scale") else None
+                    reading = safe_float(det.get("scale_reading"), None)
 
                     # Repair missing/inverted timestamps instead of discarding the detection.
                     # A typical weighing event lasts ~15 s; use that as a fallback duration.
@@ -1489,11 +1556,11 @@ class PorkWeighingPipeline:
                     detections.append(Detection(
                         start_time=start_time,
                         end_time=end_time,
-                        confidence=float(confidence) if confidence is not None else 0.0,
+                        confidence=safe_float(confidence, 0.0),
                         description=det.get("description", "") or "",
                         phase=1,
                         scale=scale,
-                        scale_reading=det.get("scale_reading"),
+                        scale_reading=reading,
                         unit=det.get("unit"),
                         reading_state=det.get("reading_state")
                     ))
