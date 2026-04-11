@@ -1326,7 +1326,11 @@ class PorkWeighingPipeline:
 
             if current_time >= next_extract_time:
                 rotated = self.rotate_frame(frame)
-                prepared = self.prepare_frame_for_analysis(rotated)
+                # Phase 2: no crop — send the full rotated frame to the VLM for
+                # broader scene context during verification.
+                upscaled = self.upscale_frame(rotated)
+                enhanced = self.apply_clahe(upscaled)
+                prepared = self.draw_roi_box(enhanced)  # ROI box as visual hint
                 # 4× SR on tight digit sub-crop; paste back at original frame size.
                 prepared = self._apply_digit_sr(prepared)
                 # Encode as lossless PNG (compression=0) to preserve ESRGAN detail.
