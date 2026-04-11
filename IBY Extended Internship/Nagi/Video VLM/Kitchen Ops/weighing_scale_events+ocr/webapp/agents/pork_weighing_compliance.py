@@ -619,7 +619,7 @@ class PorkWeighingPipeline:
         # 0.5 = moderate sharpening; increase toward 1.0 for stronger effect
         self._sharpen_alpha = 1.0
 
-        # Real-ESRGAN 2× super-resolution model (lazy-initialized on first Phase 2 use)
+        # Real-ESRGAN 4× super-resolution model (lazy-initialized on first Phase 2 use)
         self._sr_model = None
 
         # Red-circle visual prompting: list of (cx, cy, radius) in crop-space pixels.
@@ -1061,11 +1061,11 @@ class PorkWeighingPipeline:
         return frame
 
     # -------------------------------------------------------------------------
-    # Real-ESRGAN 2× super-resolution helpers (Phase 2 only)
+    # Real-ESRGAN 4× super-resolution helpers (Phase 2 only)
     # -------------------------------------------------------------------------
 
     def _ensure_sr_model(self) -> bool:
-        """Lazy-initialize Real-ESRGAN 2× model via spandrel. Returns True when ready."""
+        """Lazy-initialize Real-ESRGAN 4× model via spandrel. Returns True when ready."""
         if not _REALESRGAN_AVAILABLE:
             return False
         if self._sr_model is not None:
@@ -1075,8 +1075,8 @@ class PorkWeighingPipeline:
         _agent_dir = os.path.dirname(os.path.abspath(__file__))
         _cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "realesrgan")
         candidates = [
-            os.path.join(_agent_dir, "weights", "RealESRGAN_x2plus.pth"),
-            os.path.join(_cache_dir, "RealESRGAN_x2plus.pth"),
+            os.path.join(_agent_dir, "weights", "RealESRGAN_x4plus.pth"),
+            os.path.join(_cache_dir, "RealESRGAN_x4plus.pth"),
         ]
         weights_path = next((p for p in candidates if os.path.exists(p)), None)
 
@@ -1085,11 +1085,11 @@ class PorkWeighingPipeline:
             os.makedirs(_cache_dir, exist_ok=True)
             _url = (
                 "https://github.com/xinntao/Real-ESRGAN/releases/download/"
-                "v0.2.1/RealESRGAN_x2plus.pth"
+                "v0.1.0/RealESRGAN_x4plus.pth"
             )
             try:
                 import urllib.request
-                logger.info(f"Downloading Real-ESRGAN x2plus weights → {download_target}")
+                logger.info(f"Downloading Real-ESRGAN x4plus weights → {download_target}")
                 urllib.request.urlretrieve(_url, download_target)
                 weights_path = download_target
                 logger.info("Real-ESRGAN weights downloaded.")
@@ -1103,7 +1103,7 @@ class PorkWeighingPipeline:
             self._sr_device = _torch.device("cuda" if _torch.cuda.is_available() else "cpu")
             self._sr_model.to(self._sr_device)
             logger.info(
-                f"Real-ESRGAN 2× model ready via spandrel "
+                f"Real-ESRGAN 4× model ready via spandrel "
                 f"(device={self._sr_device}; digit SR active for Phase 2 frames)."
             )
             return True
@@ -1113,10 +1113,10 @@ class PorkWeighingPipeline:
             return False
 
     def _apply_digit_sr(self, frame: np.ndarray) -> np.ndarray:
-        """Apply Real-ESRGAN 2× SR to the tight digit sub-crop, then paste back.
+        """Apply Real-ESRGAN 4× SR to the tight digit sub-crop, then paste back.
 
         Extracts each display bounding box (derived from self.display_circles),
-        upscales it 2× with Real-ESRGAN, and bicubic-downsamples the SR result
+        upscales it 4× with Real-ESRGAN, and Lanczos-downsamples the SR result
         back to the original patch size before pasting. The net effect is
         AI-quality denoising + sharpening specifically over the digit region,
         producing a cleaner signal for the VLM OCR pass in Phase 2.
@@ -1169,7 +1169,7 @@ class PorkWeighingPipeline:
                 logger.warning(f"Real-ESRGAN enhance failed on digit patch: {exc}")
                 continue
 
-            # Resize the 2× SR output back to the original patch dimensions
+            # Resize the 4× SR output back to the original patch dimensions
             # (keeps the overall frame size fixed while leveraging SR's denoising)
             ph, pw = patch_bgr.shape[:2]
             sr_resized = cv2.resize(sr_bgr, (pw, ph), interpolation=cv2.INTER_LANCZOS4)
@@ -1225,39 +1225,6 @@ class PorkWeighingPipeline:
 
         cap.release()
         logger.info(f"Saved {saved} CLAHE preview frames to {out_dir}")
-
-    def _apply_sr_full_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Apply Real-ESRGAN 2× SR to the entire prepared frame (Phase 2).
-
-        Unlike _apply_digit_sr (which patches only the digit sub-crop and pastes
-        back at the original size), this method upscales the whole frame with
-        Real-ESRGAN and returns the 2× output directly.  The larger, AI-denoised
-        frame is then encoded as lossless PNG (compression=0) for Phase 2 analysis.
-
-        Returns frame unchanged if Real-ESRGAN is unavailable or fails.
-        """
-        if not self._ensure_sr_model():
-            return frame
-
-        try:
-            import numpy as np
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            tensor = _torch.from_numpy(frame_rgb.transpose(2, 0, 1)).unsqueeze(0)
-            tensor = tensor.to(self._sr_device)
-
-            with _torch.no_grad():
-                sr_tensor = self._sr_model(tensor)
-
-            sr_np = sr_tensor.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy()
-            sr_bgr = cv2.cvtColor((sr_np * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-            logger.debug(
-                f"Full-frame ESRGAN: {frame.shape[1]}×{frame.shape[0]} → "
-                f"{sr_bgr.shape[1]}×{sr_bgr.shape[0]}"
-            )
-            return sr_bgr
-        except Exception as exc:
-            logger.warning(f"Full-frame ESRGAN failed ({exc}); using original frame.")
-            return frame
 
     def _compress_frame(
         self,
@@ -1360,9 +1327,8 @@ class PorkWeighingPipeline:
             if current_time >= next_extract_time:
                 rotated = self.rotate_frame(frame)
                 prepared = self.prepare_frame_for_analysis(rotated)
-                # Full-frame ESRGAN 2× SR — increases resolution of the whole
-                # prepared frame rather than only the digit sub-crop.
-                prepared = self._apply_sr_full_frame(prepared)
+                # 4× SR on tight digit sub-crop; paste back at original frame size.
+                prepared = self._apply_digit_sr(prepared)
                 # Encode as lossless PNG (compression=0) to preserve ESRGAN detail.
                 base64_frame = self._compress_frame(
                     prepared,
