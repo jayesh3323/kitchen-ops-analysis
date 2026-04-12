@@ -87,7 +87,7 @@ from auto_roi import CIRCLE_RADIUS_MARGIN
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
-AGENT_FPS                     = 0.5
+AGENT_FPS                     = 0.75
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
 AGENT_CLIP_BUFFER_SECONDS     = 5
@@ -1089,7 +1089,7 @@ class PorkWeighingPipeline:
         # frame = cv2.cvtColor(cv2.merge([enhanced_l, a, b]), cv2.COLOR_LAB2BGR)
 
         #── Unsharp mask: suppress noise then add back clean edges ────────────
-        # blurred = cv2.GaussianBlur(frame, (3, 3), 0.5)
+        # blurred = cv2.GaussianBlur(frame, (0, 0), 3)
         # frame = cv2.addWeighted(frame, 1.0 + self._sharpen_alpha, blurred, -self._sharpen_alpha, 0)
 
         return frame
@@ -1172,7 +1172,7 @@ class PorkWeighingPipeline:
         # Expand the digit crop beyond the bare circle radius so ESRGAN has
         # more surrounding context (bezel, unit label).  1.5× gives ~50% extra
         # padding on each side without pulling in unrelated background.
-        _CROP_EXPAND = 1.5
+        _CROP_EXPAND = 1.0
 
         result = frame.copy()
         for cx, cy, radius in self.display_circles:
@@ -1365,11 +1365,7 @@ class PorkWeighingPipeline:
 
             if current_time >= next_extract_time:
                 rotated = self.rotate_frame(frame)
-                # Phase 2: no crop — send the full rotated frame to the VLM for
-                # broader scene context during verification.
-                upscaled = self.upscale_frame(rotated)
-                enhanced = self.apply_clahe(upscaled)
-                prepared = self.draw_roi_box(enhanced)  # ROI box as visual hint
+                prepared = self.prepare_frame_for_analysis(rotated)
                 # 4× SR on tight digit sub-crop; paste back at original frame size.
                 prepared = self._apply_digit_sr(prepared)
                 # Encode as lossless PNG (compression=0) to preserve ESRGAN detail.
