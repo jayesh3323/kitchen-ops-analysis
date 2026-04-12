@@ -86,7 +86,7 @@ from auto_roi import CIRCLE_RADIUS_MARGIN
 # ============================================================================
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
-AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
+AGENT_PHASE2_MODEL_NAME       = "gemini-3-flash-preview"
 AGENT_FPS                     = 0.75
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
