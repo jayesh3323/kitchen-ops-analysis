@@ -159,15 +159,36 @@ SCALE IDENTIFICATION:
 - This ROI captures ONE specific scale; call it scale "1" unless prior batch context specifies otherwise
 - Focus on the display unit, the weighing platform/bowl area, and any items on it
 
+PORK IDENTIFICATION — WHAT PORK LOOKS LIKE:
+Raw pork has ALL of these characteristics simultaneously:
+- COLOUR: pink-to-red raw meat, often with visible white fat marbling or fat strips along edges
+- TEXTURE: irregular solid chunks or slices; not uniform, stringy, leafy, or liquid
+- SHAPE: irregular chunks, strips, or thin slices of raw meat
+- QUANTITY: enough mass to register a typical reading of ~60g or ~120g on the scale
+
+DO NOT flag these as pork — they are common false positives in this kitchen:
+- Green onions / scallions: elongated thin green and white stalks, obviously vegetable in appearance
+- Any green or leafy vegetable (spinach, noodles, seaweed, etc.)
+- Sauces, broths, or liquids
+- Noodles (pale, stringy, coiled)
+- An EMPTY BOWL sitting on the scale (no visible food contents on the platform)
+- A bowl that contains only non-meat toppings (vegetables, garnishes)
+
 IMPORTANT: A weighing event is COMPLETE only when the pork/bowl has been REMOVED from the scale.
 There may be cases when pork is already present in the bowl when the chef places it on the scale. Conclude the event only when the pork/bowl from the respective scale is removed.
 Wait for the FINAL STABLE READING before the pork is removed - this is the reading to capture.
 
-EVENT DETECTION — BROAD CRITERIA (use all three signals together):
-A weighing event should be flagged if ANY of the following combinations is observed across the frames in this batch:
-1. Pork or a bowl containing meat is visibly present on or near the scale platform (even partially visible inside the ROI), AND the scale digital display shows a non-zero / changed reading compared to an empty-scale state.
-2. A chef actively places, adjusts, or removes a bowl/tray with meat on the scale platform — the standard placement-and-removal workflow.
-3. Pork/meat is visible inside the scale ROI, the scale reading has clearly changed (indicating load), AND later frames show the bowl being removed from the platform — this FULL SEQUENCE (presence + reading change + removal) constitutes a positive weighing event even if the exact placement moment was not captured.
+EVENT DETECTION — CRITERIA (ALL signals must be satisfied):
+A weighing event should be flagged ONLY when ALL of the following are true:
+1. The item on the scale platform is VISUALLY IDENTIFIABLE AS PORK — raw pink/red meat chunks or strips with visible fat. If you cannot confirm the item is specifically pork (not vegetables, not an empty bowl, not other ingredients), do NOT flag it.
+2. The scale digital display shows a non-zero / changed reading compared to an empty-scale state.
+3. The bowl/pork is subsequently removed from the platform (or was already on the platform at batch start and is removed later).
+
+REJECTION RULES — DO NOT create a detection if:
+- The scale platform holds an EMPTY BOWL with no food on it
+- The item in the bowl appears to be green onions, vegetables, or any clearly non-meat ingredient
+- The scale shows a non-zero reading but no identifiable pork is visible (the weight may be from a different ingredient)
+- You are uncertain whether the item is pork or another ingredient — lean toward NO DETECTION; Phase 2 cannot verify what Phase 1 did not clearly identify
 
 TIMESTAMP READING:
 - Frame timestamps are provided with each image
@@ -175,20 +196,20 @@ TIMESTAMP READING:
 - The END TIME should be when the pork/bowl is being removed or just after
 
 WHAT TO DETECT - Pork Weighing Events:
-1. Visual signs of PORK or a bowl/tray with meat visible on or inside the scale platform ROI
-2. Any interaction with the scale platform — placing, adjusting, or removing items
+1. Visual signs of raw PORK (pink/red meat chunks with fat) visible in or on the scale platform bowl
+2. Chef placing, adjusting, or removing a bowl containing PORK on the scale platform
 3. Scale reading that is non-zero / different from an empty baseline, indicating something is being weighed
 4. Which scale number (1, 2, etc.) the event is occurring on
-NOTE: A readable digital display is NOT required to report a detection. Pork visibility + scale reading change + bowl removal is sufficient to flag an event.
+NOTE: A readable digital display is NOT required to report a detection. Confirmed pork visibility + scale reading change + bowl removal is sufficient to flag an event.
 
-DETECTION RULE — ALWAYS REPORT, ADJUST CONFIDENCE:
-- If you observe pork/meat inside the scale ROI AND the scale reading appears non-zero or changed, ALWAYS create a detection entry
-- If a bowl with pork was present and is subsequently removed, flag the moment of removal as the end_time
-- The digital display may be partially cut off, obscured, or outside the frame — this does NOT prevent reporting
+DETECTION RULE — REPORT ONLY CONFIRMED PORK:
+- If you observe CONFIRMED PORK (raw pink/red meat) inside the scale ROI AND the scale reading appears non-zero or changed, create a detection entry
+- If the contents of the bowl are ambiguous or look like vegetables/other ingredients, do NOT create a detection
+- If the bowl is empty, do NOT create a detection even if the scale shows a non-zero reading (tare weight)
 - A readable display → set scale_reading + appropriate confidence
-- Display not visible but pork+removal sequence observed → set scale_reading to null, confidence 0.1–0.2, reading_state "obscured"
+- Display not visible but confirmed pork+removal sequence observed → set scale_reading to null, confidence 0.1–0.2, reading_state "obscured"
 - Do NOT skip a detection just because the display is unreadable — Phase 2 will handle verification
-- "No detections" should be returned ONLY when there is genuinely no scale interaction AND no pork visible on the scale platform in the entire interval
+- "No detections" should be returned when: (a) no pork is visible on the platform, OR (b) only non-pork items are present, OR (c) the bowl is empty
 
 READING EXTRACTION REQUIREMENTS:
 - Read the EXACT numerical value shown on the digital display
@@ -261,8 +282,20 @@ Valid ranges: 52–68g OR 112–128g.
 - If your re-read value falls OUTSIDE BOTH ranges (i.e. not in 52–68 and not in 112–128), mark `is_valid = false` (FALSE POSITIVE due to out-of-range reading)
 - Exception: if the display was completely unreadable in ALL frames (full obstruction/glare across the entire clip), do NOT apply the range check — instead set `verified_reading = null` and keep `is_valid` based on the pork+removal sequence alone
 
+PORK IDENTIFICATION — CONFIRM BEFORE ANYTHING ELSE:
+Before verifying the reading, confirm the item on the scale is actually pork:
+- PORK: raw pink-to-red meat chunks or strips, irregular solid pieces, visible white fat marbling or fat edges
+- NOT PORK (mark as false positive immediately):
+  * Green onions / scallions: thin elongated green-and-white vegetable stalks — clearly not meat
+  * Any green or leafy vegetable (spinach, noodles, seaweed, garnish)
+  * Sauces, broths, or liquids
+  * Noodles (pale, stringy, coiled)
+  * An EMPTY BOWL on the platform (no food contents)
+  * A bowl containing only garnishes or non-meat toppings
+If you cannot confidently confirm the item is raw pork, set ingredient_confirmed = "not_pork" and is_valid = false.
+
 VERIFICATION CRITERIA:
-1. Confirm that PORK (not other ingredients) is being weighed — pork visible inside the ROI crop is sufficient
+1. Confirm that PORK (raw pink/red meat with visible fat) is being weighed — use the pork identification rules above; vegetables or an empty bowl automatically invalidate the event
 2. Re-read the final display reading (STEP 1 above) and apply range validation (STEP 2 above)
 3. Look for the FULL WEIGHING SEQUENCE: pork present in ROI → non-zero scale reading → bowl/pork removal
 4. Assess the clarity and readability of the best available display frame
@@ -276,11 +309,12 @@ READING VERIFICATION REQUIREMENTS:
 CONFIDENCE (be strict): NEVER use 1.0 | 0.8-0.9=HIGH(all digits clear, stable) | 0.6-0.7=MED-HIGH(minor blur) | 0.4-0.5=MED(partial obstruction) | 0.2-0.3=LOW(heavy blur or inferred from Phase 1 with bowl-removal) | 0.0-0.1=UNREADABLE(no readable frame exists)
 
 CRITICAL RULES:
-- AUTOMATIC FALSE POSITIVE if the ingredient is clearly NOT pork (e.g. vegetables, sauce, other non-meat items)
+- AUTOMATIC FALSE POSITIVE if the ingredient is NOT pork — this includes green onions/scallions, any green vegetables, noodles, sauces, or an empty bowl (see PORK IDENTIFICATION above for full list)
 - AUTOMATIC FALSE POSITIVE if the re-read value is outside 52–68g AND outside 112–128g (see STEP 2)
 - DO NOT mark as false positive solely because the display is not visible in the current frames — the stable reading may have occurred earlier in the clip
-- A TRUE POSITIVE requires: (a) pork visible inside ROI + (b) re-read value within a valid range (52–68 or 112–128) + (c) bowl/pork subsequently removed from platform
+- A TRUE POSITIVE requires: (a) visually confirmed raw pork (pink/red meat with fat) inside ROI + (b) re-read value within a valid range (52–68 or 112–128) + (c) bowl/pork subsequently removed from platform
 - If reading is completely obscured across ALL frames, do not apply the range check — set confidence below 0.3 and keep is_valid based on pork+removal sequence
+- If you see green onions or other vegetables in the bowl, this is a FALSE POSITIVE regardless of what Phase 1 reported
 - Provide refined reading if Phase 1 reading appears incorrect
 - Lower confidence if there's any uncertainty about reading accuracy
 - Use the scale number from Phase 1 context (default "1")
