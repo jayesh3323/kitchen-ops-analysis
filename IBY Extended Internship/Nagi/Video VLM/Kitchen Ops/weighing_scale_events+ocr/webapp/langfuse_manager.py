@@ -242,6 +242,12 @@ def log_generation(
             # Merge extra breakdown (image_input_tokens etc.) — must be ints
             _usage.update({k: int(v) for k, v in usage_details.items()})
 
+        _cost: Dict[str, float] = {
+            "input":  float(input_cost_usd),
+            "output": float(output_cost_usd),
+            "total":  float(cost_usd),
+        }
+
         gen = parent.start_observation(
             name=name,
             as_type="generation",
@@ -249,13 +255,15 @@ def log_generation(
             input=input_text,
             output=output_text,
             usage_details=_usage,
-            cost_details={
-                "input":  float(input_cost_usd),
-                "output": float(output_cost_usd),
-                "total":  float(cost_usd),
-            },
+            cost_details=_cost,
             metadata=metadata or {},
         )
+        # Belt-and-suspenders: update after creation in case start_observation
+        # doesn't persist usage_details/cost_details in some SDK edge cases.
+        try:
+            gen.update(usage_details=_usage, cost_details=_cost)
+        except Exception:
+            pass
         gen.end()
     except Exception as e:
         logger.warning(f"log_generation '{name}' failed (non-fatal): {e}")
