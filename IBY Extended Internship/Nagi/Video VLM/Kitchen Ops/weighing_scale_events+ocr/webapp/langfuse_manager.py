@@ -230,29 +230,32 @@ def log_generation(
     if lf is None:
         return
     try:
+        # Langfuse v3 API: token counts go in usage_details (Dict[str, int]),
+        # costs go in cost_details (Dict[str, float]).
+        # The old `usage={...}` dict is NOT a valid parameter in v3.x.
+        _usage: Dict[str, int] = {
+            "input":  int(usage_input),
+            "output": int(usage_output),
+            "total":  int(usage_total),
+        }
+        if usage_details:
+            # Merge extra breakdown (image_input_tokens etc.) — must be ints
+            _usage.update({k: int(v) for k, v in usage_details.items()})
+
         gen = parent.start_observation(
             name=name,
             as_type="generation",
             model=model,
-            usage={
-                "input":        usage_input,
-                "output":       usage_output,
-                "total":        usage_total,
-                "unit":         "TOKENS",
-                "input_cost":   input_cost_usd,
-                "output_cost":  output_cost_usd,
-                "total_cost":   cost_usd,
+            input=input_text,
+            output=output_text,
+            usage_details=_usage,
+            cost_details={
+                "input":  float(input_cost_usd),
+                "output": float(output_cost_usd),
+                "total":  float(cost_usd),
             },
-            usage_details=usage_details or {},
             metadata=metadata or {},
         )
-        update_kwargs: Dict[str, Any] = {}
-        if input_text is not None:
-            update_kwargs["input"] = input_text
-        if output_text is not None:
-            update_kwargs["output"] = output_text
-        if update_kwargs:
-            gen.update(**update_kwargs)
         gen.end()
     except Exception as e:
         logger.warning(f"log_generation '{name}' failed (non-fatal): {e}")
