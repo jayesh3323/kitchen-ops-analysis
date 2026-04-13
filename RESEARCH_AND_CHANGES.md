@@ -15,6 +15,8 @@
 | I5 | Grounded description pre-prompt | All 5 agents | **Grounded description pre-prompt** — instruct model to describe visual evidence before classifying (add block to PHASE1_SYSTEM_PROMPT). Visual Chain-of-Thought prompting | ✅ Working |
 | I6 | Lower confidence thresholds | All 5 agents | **Lower confidence thresholds** (safe after voting active): pork 0.60→0.50, plating 0.70→0.55, serve 0.70→0.55, noodle 0.80→0.65, bowl 0.80→0.65 | Works well for pork weighing task |
 | I7 | Few-shot reference images in Phase 1 prompts | All 5 agents | **Few-shot reference images in Phase 1 prompts** — 2–3 annotated JPEG crops per agent inline as base64. +15–25% accuracy; saturates at 3 examples | ✅ Working |
+| I8 | Real-ESRGAN super-resolution on digit sub-crop |	pork_weighing_compliance.py |	Applied 4× Real-ESRGAN SR on a tight sub-crop around each detected scale display (1.5× padded bounding box from display_circles), then Lanczos-downsampled the SR output back to the original patch size before pasting in-place. |	✅ Working
+
 
 ---
 
