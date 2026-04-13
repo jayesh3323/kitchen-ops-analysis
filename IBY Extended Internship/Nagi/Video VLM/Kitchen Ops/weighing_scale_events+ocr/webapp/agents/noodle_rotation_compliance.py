@@ -702,13 +702,17 @@ class NoodleRotationPipeline:
                 logger.info(f"  Detection {i+1}: transfer_count={transfer_count}, time={start_time}-{end_time}, conf={confidence}, status={filter_status}")
                 print(f"  Detection {i+1}: transfer_count={transfer_count}, time={start_time}-{end_time}, conf={confidence}, status={filter_status}")
 
-            # Track token usage
-            tokens_used = response.usage.total_tokens
+            # Track token usage — support both Chat Completions (prompt_tokens/
+            # completion_tokens) and Responses API (input_tokens/output_tokens).
+            _u = response.usage
+            _prompt     = int(getattr(_u, "prompt_tokens", 0) or getattr(_u, "input_tokens", 0) or 0)
+            _completion = int(getattr(_u, "completion_tokens", 0) or getattr(_u, "output_tokens", 0) or 0)
+            tokens_used = int(getattr(_u, "total_tokens", 0) or 0) or (_prompt + _completion)
             self.token_usage["phase1_batches"].append({
                 "batch_id": batch.batch_id,
                 "frames": len(batch.frames),
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
+                "prompt_tokens": _prompt,
+                "completion_tokens": _completion,
                 "total_tokens": tokens_used
             })
             self.token_usage["total_phase1_tokens"] += tokens_used

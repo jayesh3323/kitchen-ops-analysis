@@ -1556,14 +1556,21 @@ class PorkWeighingPipeline:
                 filter_status = "PASS" if confidence >= self.config.confidence_threshold else f"FILTERED (conf={confidence})"
                 logger.debug(f"  Det {i+1}: conf={confidence}, scale={det.get('scale')}, reading={det.get('scale_reading')}, time={det.get('start_time')}-{det.get('end_time')} [{filter_status}]")
             
-            # Track token usage — granular breakdown
-            prompt_toks      = response.usage.prompt_tokens
-            completion_toks  = response.usage.completion_tokens
-            tokens_used      = response.usage.total_tokens
-            cached_toks      = getattr(
-                getattr(response.usage, "prompt_tokens_details", None),
-                "cached_tokens", 0
-            ) or 0
+            # Track token usage — granular breakdown.
+            # gpt-5-mini (Responses API) reports input_tokens/output_tokens;
+            # older models use prompt_tokens/completion_tokens.  Fall back
+            # gracefully so cost and breakdown work for both.
+            _u = response.usage
+            prompt_toks     = int(getattr(_u, "prompt_tokens", 0) or getattr(_u, "input_tokens", 0) or 0)
+            completion_toks = int(getattr(_u, "completion_tokens", 0) or getattr(_u, "output_tokens", 0) or 0)
+            tokens_used     = int(getattr(_u, "total_tokens", 0) or 0)
+            if tokens_used == 0:
+                tokens_used = prompt_toks + completion_toks
+            cached_toks = (
+                getattr(getattr(_u, "prompt_tokens_details", None), "cached_tokens", 0)
+                or getattr(getattr(_u, "input_tokens_details", None), "cached_tokens", 0)
+                or 0
+            )
             # Estimate image vs text split for input tokens
             tok_per_img  = (
                 _OAI_IMG_TOKENS_CROPPED
