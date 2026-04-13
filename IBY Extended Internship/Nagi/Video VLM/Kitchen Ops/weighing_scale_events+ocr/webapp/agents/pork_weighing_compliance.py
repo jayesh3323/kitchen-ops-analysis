@@ -87,6 +87,35 @@ from auto_roi import CIRCLE_RADIUS_MARGIN
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
 AGENT_PHASE2_MODEL_NAME       = "gemini-3-flash-preview"
+
+# ---------------------------------------------------------------------------
+# Model pricing — USD per 1 000 000 tokens (input_rate, output_rate).
+# Image tokens are billed at the same rate as text for all models listed here.
+# ---------------------------------------------------------------------------
+_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "gpt-5-mini":               (0.40,  1.60),
+    "gpt-4o-mini":              (0.15,  0.60),
+    "gpt-4o":                   (2.50, 10.00),
+    "gemini-3-flash-preview":   (0.15,  0.60),
+    "gemini-2.5-pro":           (1.25, 10.00),
+    "gemini-2.5-pro-preview":   (1.25, 10.00),
+    "gemini-2.5-flash":         (0.075, 0.30),
+    "gemini-2.5-flash-preview": (0.075, 0.30),
+    "gemini-2.0-flash":         (0.10,  0.40),
+}
+
+# Per-frame image token estimates used for text/image input breakdown.
+# OpenAI detail=auto: small ROI crops (<512 px) → 85 tok; full frames → 765 tok.
+# Gemini: ~258 tokens per standard 768 px image.
+_OAI_IMG_TOKENS_CROPPED   = 85
+_OAI_IMG_TOKENS_FULLFRAME  = 765
+_GEMINI_IMG_TOKENS         = 258
+
+
+def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Return estimated cost in USD for a single API call."""
+    rates = _MODEL_PRICING.get(model, (0.0, 0.0))
+    return (input_tokens * rates[0] + output_tokens * rates[1]) / 1_000_000.0
 AGENT_FPS                     = 0.75
 AGENT_CONFIDENCE_THRESHOLD    = 0.1
 AGENT_MAX_BATCH_SIZE_MB       = 30.0
@@ -619,11 +648,33 @@ class PorkWeighingPipeline:
 
         # Token tracking
         self.token_usage = {
+            # Per-call records
             "phase1_batches": [],
             "phase2_clips": [],
+            "display_detection": [],          # gpt-4o-mini calls during circle detection
+            # Phase totals — tokens
             "total_phase1_tokens": 0,
+            "total_phase1_prompt_tokens": 0,
+            "total_phase1_completion_tokens": 0,
+            "total_phase1_image_tokens": 0,   # estimated
+            "total_phase1_text_input_tokens": 0,  # estimated = prompt - image
             "total_phase2_tokens": 0,
+            "total_phase2_prompt_tokens": 0,
+            "total_phase2_completion_tokens": 0,
+            "total_phase2_image_tokens": 0,   # estimated
+            "total_phase2_text_input_tokens": 0,
+            "total_display_detection_tokens": 0,
             "total_tokens": 0,
+            # Phase totals — cost (USD)
+            "total_cost_usd": 0.0,
+            "phase1_cost_usd": 0.0,
+            "phase1_input_cost_usd": 0.0,
+            "phase1_output_cost_usd": 0.0,
+            "phase2_cost_usd": 0.0,
+            "phase2_input_cost_usd": 0.0,
+            "phase2_output_cost_usd": 0.0,
+            "display_detection_cost_usd": 0.0,
+            # Raw LLM responses for debugging
             "phase1_raw_responses": [],
             "phase2_raw_responses": [],
         }
@@ -1005,6 +1056,33 @@ class PorkWeighingPipeline:
                     response_format={"type": "json_object"},
                 )
                 raw = resp.choices[0].message.content or "{}"
+                # Capture display-detection token usage (gpt-4o-mini call)
+                if hasattr(resp, "usage") and resp.usage:
+                    _dd_prompt = resp.usage.prompt_tokens or 0
+                    _dd_comp   = resp.usage.completion_tokens or 0
+                    _dd_total  = resp.usage.total_tokens or (_dd_prompt + _dd_comp)
+                    _dd_rates  = _MODEL_PRICING.get("gpt-4o-mini", (0.0, 0.0))
+                    _dd_cost   = (_dd_prompt * _dd_rates[0] + _dd_comp * _dd_rates[1]) / 1_000_000.0
+                    # image tokens: detail=high, crop is small ROI — use conservative estimate
+                    _dd_img    = _OAI_IMG_TOKENS_FULLFRAME  # detail="high"
+                    _dd_txt_in = max(0, _dd_prompt - _dd_img)
+                    self.token_usage["display_detection"].append({
+                        "model":               "gpt-4o-mini",
+                        "frames":              1,
+                        "prompt_tokens":       _dd_prompt,
+                        "completion_tokens":   _dd_comp,
+                        "total_tokens":        _dd_total,
+                        "image_input_tokens":  _dd_img,
+                        "text_input_tokens":   _dd_txt_in,
+                        "text_output_tokens":  _dd_comp,
+                        "input_cost_usd":      round(_dd_prompt * _dd_rates[0] / 1_000_000.0, 6),
+                        "output_cost_usd":     round(_dd_comp   * _dd_rates[1] / 1_000_000.0, 6),
+                        "cost_usd":            round(_dd_cost, 6),
+                    })
+                    self.token_usage["total_display_detection_tokens"] += _dd_total
+                    self.token_usage["total_tokens"]                   += _dd_total
+                    self.token_usage["display_detection_cost_usd"]     += _dd_cost
+                    self.token_usage["total_cost_usd"]                 += _dd_cost
                 result = json.loads(raw)
                 boxes = result.get("displays", [])
                 if boxes:
@@ -1476,20 +1554,62 @@ class PorkWeighingPipeline:
                 filter_status = "PASS" if confidence >= self.config.confidence_threshold else f"FILTERED (conf={confidence})"
                 logger.debug(f"  Det {i+1}: conf={confidence}, scale={det.get('scale')}, reading={det.get('scale_reading')}, time={det.get('start_time')}-{det.get('end_time')} [{filter_status}]")
             
-            # Track token usage
-            tokens_used = response.usage.total_tokens
+            # Track token usage — granular breakdown
+            prompt_toks      = response.usage.prompt_tokens
+            completion_toks  = response.usage.completion_tokens
+            tokens_used      = response.usage.total_tokens
+            cached_toks      = getattr(
+                getattr(response.usage, "prompt_tokens_details", None),
+                "cached_tokens", 0
+            ) or 0
+            # Estimate image vs text split for input tokens
+            tok_per_img  = (
+                _OAI_IMG_TOKENS_CROPPED
+                if self.config.enable_cropping
+                else _OAI_IMG_TOKENS_FULLFRAME
+            )
+            image_toks       = len(batch.frames) * tok_per_img
+            text_input_toks  = max(0, prompt_toks - image_toks)
+            # Cost
+            input_cost  = prompt_toks * _MODEL_PRICING.get(self.config.phase1_model_name, (0.0, 0.0))[0] / 1_000_000.0
+            output_cost = completion_toks * _MODEL_PRICING.get(self.config.phase1_model_name, (0.0, 0.0))[1] / 1_000_000.0
+            cost        = input_cost + output_cost
+
             batch_token_info = {
-                "batch_id": batch.batch_id,
-                "frames": len(batch.frames),
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": tokens_used
+                "batch_id":            batch.batch_id,
+                "model":               self.config.phase1_model_name,
+                "frames":              len(batch.frames),
+                # API-reported
+                "prompt_tokens":       prompt_toks,
+                "completion_tokens":   completion_toks,
+                "total_tokens":        tokens_used,
+                "cached_tokens":       cached_toks,
+                # Estimated breakdown
+                "image_input_tokens":  image_toks,
+                "text_input_tokens":   text_input_toks,
+                "text_output_tokens":  completion_toks,
+                # Cost
+                "input_cost_usd":      round(input_cost,  6),
+                "output_cost_usd":     round(output_cost, 6),
+                "cost_usd":            round(cost,         6),
             }
             self.token_usage["phase1_batches"].append(batch_token_info)
-            self.token_usage["total_phase1_tokens"] += tokens_used
-            self.token_usage["total_tokens"] += tokens_used
-            
-            logger.info(f"Batch {batch.batch_id} complete. Tokens: {tokens_used}")
+            self.token_usage["total_phase1_tokens"]           += tokens_used
+            self.token_usage["total_phase1_prompt_tokens"]    += prompt_toks
+            self.token_usage["total_phase1_completion_tokens"] += completion_toks
+            self.token_usage["total_phase1_image_tokens"]     += image_toks
+            self.token_usage["total_phase1_text_input_tokens"] += text_input_toks
+            self.token_usage["total_tokens"]                  += tokens_used
+            self.token_usage["phase1_cost_usd"]               += cost
+            self.token_usage["phase1_input_cost_usd"]         += input_cost
+            self.token_usage["phase1_output_cost_usd"]        += output_cost
+            self.token_usage["total_cost_usd"]                += cost
+
+            logger.info(
+                f"Batch {batch.batch_id} complete. Tokens: {tokens_used} "
+                f"(img≈{image_toks}, txt_in≈{text_input_toks}, out={completion_toks}) "
+                f"Cost: ${cost:.4f}"
+            )
             return result
         except Exception as e:
             logger.error(f"Error analyzing batch {batch.batch_id}: {e}")
@@ -1717,17 +1837,54 @@ class PorkWeighingPipeline:
             tokens_used = 0
             try:
                 if hasattr(response, 'usage_metadata'):
-                    tokens_used = response.usage_metadata.total_token_count
+                    um               = response.usage_metadata
+                    prompt_toks      = getattr(um, 'prompt_token_count',      0) or 0
+                    completion_toks  = getattr(um, 'candidates_token_count',  0) or 0
+                    cached_toks      = getattr(um, 'cached_content_token_count', 0) or 0
+                    tokens_used      = getattr(um, 'total_token_count', prompt_toks + completion_toks) or 0
+                    # Estimate image vs text split for Gemini input
+                    image_toks      = len(clip_frames) * _GEMINI_IMG_TOKENS
+                    text_input_toks = max(0, prompt_toks - image_toks)
+                    # Cost
+                    rates       = _MODEL_PRICING.get(self.config.phase2_model_name, (0.0, 0.0))
+                    input_cost  = prompt_toks     * rates[0] / 1_000_000.0
+                    output_cost = completion_toks * rates[1] / 1_000_000.0
+                    cost        = input_cost + output_cost
+
                     clip_token_info = {
-                        "clip_index": clip_index,
-                        "frames": len(clip_frames),
-                        "prompt_tokens": getattr(response.usage_metadata, 'prompt_token_count', 0),
-                        "completion_tokens": getattr(response.usage_metadata, 'candidates_token_count', 0),
-                        "total_tokens": tokens_used
+                        "clip_index":          clip_index,
+                        "model":               self.config.phase2_model_name,
+                        "frames":              len(clip_frames),
+                        # API-reported
+                        "prompt_tokens":       prompt_toks,
+                        "completion_tokens":   completion_toks,
+                        "total_tokens":        tokens_used,
+                        "cached_tokens":       cached_toks,
+                        # Estimated breakdown
+                        "image_input_tokens":  image_toks,
+                        "text_input_tokens":   text_input_toks,
+                        "text_output_tokens":  completion_toks,
+                        # Cost
+                        "input_cost_usd":      round(input_cost,  6),
+                        "output_cost_usd":     round(output_cost, 6),
+                        "cost_usd":            round(cost,         6),
                     }
                     self.token_usage["phase2_clips"].append(clip_token_info)
-                    self.token_usage["total_phase2_tokens"] += tokens_used
-                    self.token_usage["total_tokens"] += tokens_used
+                    self.token_usage["total_phase2_tokens"]           += tokens_used
+                    self.token_usage["total_phase2_prompt_tokens"]    += prompt_toks
+                    self.token_usage["total_phase2_completion_tokens"] += completion_toks
+                    self.token_usage["total_phase2_image_tokens"]     += image_toks
+                    self.token_usage["total_phase2_text_input_tokens"] += text_input_toks
+                    self.token_usage["total_tokens"]                  += tokens_used
+                    self.token_usage["phase2_cost_usd"]               += cost
+                    self.token_usage["phase2_input_cost_usd"]         += input_cost
+                    self.token_usage["phase2_output_cost_usd"]        += output_cost
+                    self.token_usage["total_cost_usd"]                += cost
+                    logger.info(
+                        f"Clip {clip_index} tokens: {tokens_used} "
+                        f"(img≈{image_toks}, txt_in≈{text_input_toks}, out={completion_toks}) "
+                        f"Cost: ${cost:.4f}"
+                    )
             except Exception as token_err:
                 logger.warning(f"Could not extract token usage from Gemini response: {token_err}")
             
