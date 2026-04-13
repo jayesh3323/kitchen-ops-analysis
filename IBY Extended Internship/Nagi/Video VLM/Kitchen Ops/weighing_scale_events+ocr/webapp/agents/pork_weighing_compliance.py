@@ -35,6 +35,7 @@ import io
 import json
 import base64
 import logging
+from motion_utils import compute_batch_mafd
 import shutil
 import tempfile
 import subprocess
@@ -422,6 +423,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION
     png_compression: int = PNG_COMPRESSION
     phase2_png_compression: int = PHASE2_PNG_COMPRESSION
+    motion_threshold: float = 0.0
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -1643,6 +1645,12 @@ class PorkWeighingPipeline:
         context = "This is the first batch of the video."
         
         for batch in batches:
+            # Motion pre-screening: skip idle batches (DyToK arXiv 2512.06866)
+            if self.config.motion_threshold > 0:
+                score = compute_batch_mafd(batch.frames)
+                if score < self.config.motion_threshold:
+                    logger.info(f"Batch {batch.batch_id} skipped — MAFD {score:.1f} < threshold {self.config.motion_threshold}")
+                    continue
             result = self.analyze_batch_phase1(batch, context)
             for det in result.get("detections", []):
                 confidence = det.get("confidence", 0) or 0
