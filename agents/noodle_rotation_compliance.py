@@ -796,6 +796,18 @@ class NoodleRotationPipeline:
                 with open(os.path.join(p1_dir, f"frame_{fi + 1}_{ts:.1f}s.png"), "wb") as imgf:
                     imgf.write(img_bytes)
 
+        # Save a uniform sample of all extracted frames to sample_frames/ so the
+        # dashboard can show what the pipeline actually saw (with optical flow
+        # overlay applied if enabled).  Cap at 30 frames to keep disk usage low.
+        if all_frames:
+            max_samples = 30
+            step = max(1, len(all_frames) // max_samples)
+            for fi, (ts, b64) in enumerate(all_frames[::step][:max_samples]):
+                img_bytes = base64.b64decode(b64)
+                with open(os.path.join(self.frames_dir, f"frame_{fi + 1:03d}_{ts:.1f}s.png"), "wb") as imgf:
+                    imgf.write(img_bytes)
+            logger.info(f"Saved {min(len(all_frames[::step]), max_samples)} sample frames to {self.frames_dir}")
+
         return detections
 
     # =========================================================================
