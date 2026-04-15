@@ -980,33 +980,61 @@ class NoodleRotationPipeline:
         return consolidated
 
     def run_phase2(self, video_path: str, phase1_detections: List[Detection]) -> List[Detection]:
-        """Run phase 2: Verification using Phase 1 cached frames."""
-        logger.info("PHASE 2: Verification")
+        """Run phase 2: Verification using actual video clips extracted via ffmpeg."""
+        logger.info("PHASE 2: Verification (clip-based)")
         consolidated = self.consolidate_detections(phase1_detections)
         logger.info(f"Consolidated {len(phase1_detections)} Phase 1 detections into {len(consolidated)} events for verification")
 
-        # Reuse Phase 1 frames (already extracted and pre-processed)
-        source_frames: List[Tuple[float, str]] = getattr(self, "all_frames", None) or []
-        if not source_frames:
-            logger.warning("Phase 1 frames not cached; re-extracting for Phase 2")
-            source_frames = self.extract_frames_phase2(video_path)
+        # Window length above which we split into start+end segments to avoid
+        # sending an excessively long clip to Gemini (matches plating_time pattern).
+        LONG_EVENT_THRESHOLD_S = 20.0
+        SHORT_WINDOW_S = 10.0
 
         verified = []
 
         for idx, detection in enumerate(consolidated):
             logger.info(f"Verifying {idx+1}/{len(consolidated)}: {detection.start_time:.1f}s-{detection.end_time:.1f}s")
 
-            buf = self.config.clip_buffer_seconds
-            win_start = max(0.0, detection.start_time - buf)
-            win_end = detection.end_time + buf
-            clip_frames = [
-                (ts - detection.start_time, b64)
-                for ts, b64 in source_frames
-                if win_start <= ts <= win_end
-            ]
-            logger.info(f"  Using {len(clip_frames)} frames from [{win_start:.1f}s, {win_end:.1f}s] window")
+            event_duration = detection.end_time - detection.start_time
 
-            # Save verification frames for dashboard display
+            # --- Extract clip(s) ---
+            if event_duration <= LONG_EVENT_THRESHOLD_S:
+                # Short event: single full clip with buffer padding
+                clip_path = os.path.join(
+                    self.temp_dir, f"clip_{idx + 1}_{detection.start_time:.1f}s.mp4"
+                )
+                self.clip_video_segment(
+                    video_path, detection.start_time, detection.end_time, clip_path
+                )
+                clip_frames = self.extract_frames_phase2(clip_path)
+                logger.info(f"  Short event: extracted {len(clip_frames)} frames from single clip")
+            else:
+                # Long event: start window + end window (avoids huge clips)
+                start_clip_path = os.path.join(
+                    self.temp_dir, f"clip_{idx + 1}_start.mp4"
+                )
+                end_clip_path = os.path.join(
+                    self.temp_dir, f"clip_{idx + 1}_end.mp4"
+                )
+                # Start window: [detection.start_time - buf, detection.start_time + SHORT_WINDOW_S]
+                start_end = detection.start_time + SHORT_WINDOW_S
+                self.clip_video_segment(
+                    video_path, detection.start_time, start_end, start_clip_path
+                )
+                # End window: [detection.end_time - SHORT_WINDOW_S, detection.end_time + buf]
+                end_start = detection.end_time - SHORT_WINDOW_S
+                self.clip_video_segment(
+                    video_path, end_start, detection.end_time, end_clip_path
+                )
+                start_frames = self.extract_frames_phase2(start_clip_path)
+                end_frames = self.extract_frames_phase2(end_clip_path)
+                clip_frames = start_frames + end_frames
+                logger.info(
+                    f"  Long event ({event_duration:.1f}s): {len(start_frames)} start + "
+                    f"{len(end_frames)} end frames = {len(clip_frames)} total"
+                )
+
+            # Save up to 5 verification frames for dashboard display
             if clip_frames:
                 verify_dir = os.path.join(
                     self.config.output_dir, "phase2_frames", f"event_{idx + 1}"
@@ -1015,7 +1043,8 @@ class NoodleRotationPipeline:
                 step = max(1, len(clip_frames) // 5)
                 for fi, (rel_ts, b64) in enumerate(clip_frames[::step][:5]):
                     img_bytes = base64.b64decode(b64)
-                    fname = f"frame_{fi + 1}_{rel_ts + detection.start_time:.1f}s.png"
+                    abs_ts = detection.start_time + rel_ts
+                    fname = f"frame_{fi + 1}_{abs_ts:.1f}s.png"
                     with open(os.path.join(verify_dir, fname), "wb") as imgf:
                         imgf.write(img_bytes)
 
