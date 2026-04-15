@@ -1,3 +1,0 @@
-#!/bin/sh
-# Auto-push to origin after every commit
-git push origin HEAD 2>&1

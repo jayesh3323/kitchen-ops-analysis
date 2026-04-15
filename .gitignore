@@ -46,3 +46,5 @@ service_account*.json
 Thumbs.db
 upload_output.txt
 debug_timestamp_crop.jpg
+
+.git_disabled/
