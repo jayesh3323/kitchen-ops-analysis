@@ -317,7 +317,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION
     phase1_max_long_edge: int = PHASE1_MAX_LONG_EDGE
     motion_threshold: float = 0.0
-    optical_flow_overlay: bool = False
+    optical_flow_overlay: bool = True
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
