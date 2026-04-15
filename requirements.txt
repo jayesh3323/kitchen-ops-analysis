@@ -1,0 +1,33 @@
+# Web Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+jinja2==3.1.5
+
+# Database (local SQLite — default)
+sqlalchemy==2.0.36
+
+# Database (cloud Firebase — activated by USE_FIREBASE=true)
+firebase-admin>=6.0.0
+
+# LLM Observability
+langfuse>=3.0.0
+
+# Configuration
+python-dotenv==1.0.1
+
+# AWS S3 for persistent verification frame storage
+boto3>=1.26.0
+
+# Image Enhancement (Super-Resolution for Phase 2 OCR)
+spandrel>=0.4.0
+torch>=2.0.0
+
+# Existing pipeline dependencies
+openai>=1.0.0
+google-genai>=1.2.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+Pillow>=10.0.0
+# easyocr removed — pulls PyTorch (~2GB); webapp uses OpenAI vision for all OCR

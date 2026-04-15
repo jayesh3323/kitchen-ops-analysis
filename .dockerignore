@@ -1,0 +1,46 @@
+# Ignore local dev artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Local database & logs
+jobs.db
+*.log
+lf_inspect.log
+
+# Local data dirs (will be created fresh in container)
+uploads/
+results/
+
+# Dev files
+.env
+.env.example
+_test_*.py
+_inspect_*.py
+_migrate.py
+_deploy_hf.py
+_deploy_auth.py
+_backfill_created_at.py
+_set_cors.py
+upload_output.txt
+server.log
+uvicorn_error.log
+roi_kb/
+
+# IDE / OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Architecture docs (not needed in container)
+ARCHITECTURE_PLAN.md
+HF_SPACES_ARCHITECTURE.md
+DESCRIPTION.md
+README.md
