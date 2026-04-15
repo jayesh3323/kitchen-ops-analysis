@@ -16,7 +16,7 @@ import io
 import json
 import base64
 import logging
-from motion_utils import compute_batch_mafd
+from motion_utils import apply_optical_flow_overlay, compute_batch_mafd
 import shutil
 import tempfile
 import subprocess
@@ -279,6 +279,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION
     phase1_max_long_edge: int = PHASE1_MAX_LONG_EDGE
     motion_threshold: float = 0.0
+    optical_flow_overlay: bool = False
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -546,6 +547,7 @@ class NoodleRotationPipeline:
         time_interval = 1.0 / self.config.fps
         next_extract_time = 0.0
         frame_count = 0
+        prev_gray_for_flow = None
 
         while True:
             ret, frame = cap.read()
@@ -556,6 +558,8 @@ class NoodleRotationPipeline:
 
             if current_time >= next_extract_time:
                 prepared = self.prepare_frame_for_analysis(frame)
+                if self.config.optical_flow_overlay:
+                    prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
                 base64_frame = self._compress_frame(prepared, max_long_edge=self.config.phase1_max_long_edge)
                 frames.append((current_time, base64_frame))
 
@@ -585,6 +589,7 @@ class NoodleRotationPipeline:
         time_interval = 1.0 / self.config.fps
         next_extract_time = 0.0
         frame_count = 0
+        prev_gray_for_flow = None
 
         while True:
             ret, frame = cap.read()
@@ -595,6 +600,8 @@ class NoodleRotationPipeline:
 
             if current_time >= next_extract_time:
                 prepared = self.prepare_frame_for_analysis(frame)
+                if self.config.optical_flow_overlay:
+                    prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
                 base64_frame = self._compress_frame(prepared, format_override=self.config.phase2_image_format)
                 frames.append((current_time, base64_frame))
                 next_extract_time += time_interval

@@ -98,6 +98,7 @@ def run_pipeline_headless(
     kwargs["image_format"]            = job_config.get("image_format",                 ad.get("AGENT_IMAGE_FORMAT",            app_config.IMAGE_FORMAT))
     kwargs["phase2_image_format"]     = job_config.get("phase2_image_format",          ad.get("AGENT_PHASE2_IMAGE_FORMAT",     app_config.PHASE2_IMAGE_FORMAT))
     kwargs["image_target_resolution"] = job_config.get("image_target_resolution",      ad.get("AGENT_IMAGE_TARGET_RESOLUTION", app_config.IMAGE_TARGET_RESOLUTION))
+    kwargs["optical_flow_overlay"]    = bool(job_config.get("optical_flow_overlay",   ad.get("AGENT_OPTICAL_FLOW_OVERLAY",    False)))
 
     # ── Create Langfuse root span (trace) for this pipeline run ────────────
     # session_id groups all jobs of the same task type into one "task folder"

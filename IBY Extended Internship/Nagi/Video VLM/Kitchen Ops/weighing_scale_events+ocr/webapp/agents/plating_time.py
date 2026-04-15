@@ -13,7 +13,7 @@ import io
 import json
 import base64
 import logging
-from motion_utils import compute_batch_mafd
+from motion_utils import apply_optical_flow_overlay, compute_batch_mafd
 import shutil
 import tempfile
 import subprocess
@@ -317,6 +317,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION
     phase1_max_long_edge: int = PHASE1_MAX_LONG_EDGE
     motion_threshold: float = 0.0
+    optical_flow_overlay: bool = False
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -870,80 +871,90 @@ class RamenPlatingPipeline:
         time_interval = 1.0 / self.config.fps
         next_extract_time = 0.0
         frame_count = 0
-        
+        prev_gray_for_flow = None
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             current_time = frame_count / video_fps
-            
+
             if current_time >= next_extract_time:
                 # Apply rotation
                 rotated = self.rotate_frame(frame)
-                
+
                 # Prepare frame (crop + upscale or draw box)
                 prepared = self.prepare_frame_for_analysis(rotated)
-                
+
+                # Optional optical flow colour overlay for motion-direction cues
+                if self.config.optical_flow_overlay:
+                    prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
+
                 # Convert to base64
                 base64_frame = self._compress_frame(prepared, max_long_edge=self.config.phase1_max_long_edge)
                 frames.append((current_time, base64_frame))
 
                 if len(frames) % 50 == 0:
                     logger.info(f"Extracted {len(frames)} frames (timestamp: {current_time:.2f}s)")
-                
+
                 next_extract_time += time_interval
-            
+
             frame_count += 1
-        
+
         cap.release()
-        
+
         logger.info(f"Extracted {len(frames)} frames total")
         return frames
 
     def extract_frames_phase2(self, video_path: str) -> List[Tuple[float, str]]:
         """Extract frames for Phase 2 verification - always uses PNG format for best quality."""
         logger.info(f"Extracting Phase 2 frames from {video_path} at {self.config.fps} FPS (using {self.config.phase2_image_format} format)")
-        
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {video_path}")
-        
+
         video_fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = total_frames / video_fps
-        
+
         logger.info(f"Video: {video_fps:.2f} FPS, {total_frames} frames, {duration:.2f}s duration")
-        
+
         frames = []
         time_interval = 1.0 / self.config.fps
         next_extract_time = 0.0
         frame_count = 0
-        
+        prev_gray_for_flow = None
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             current_time = frame_count / video_fps
-            
+
             if current_time >= next_extract_time:
                 # Apply rotation
                 rotated = self.rotate_frame(frame)
-                
+
                 # Prepare frame (crop + upscale or draw box)
                 prepared = self.prepare_frame_for_analysis(rotated)
-                
+
+                # Optional optical flow colour overlay for motion-direction cues
+                if self.config.optical_flow_overlay:
+                    prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
+
                 # Convert to base64 using Phase 2 format (always PNG for best quality)
                 base64_frame = self._compress_frame(prepared, format_override=self.config.phase2_image_format)
                 frames.append((current_time, base64_frame))
-                
+
                 next_extract_time += time_interval
-            
+
             frame_count += 1
-        
+
         cap.release()
-        
+
         logger.info(f"Extracted {len(frames)} Phase 2 frames (PNG format)")
         return frames
 
