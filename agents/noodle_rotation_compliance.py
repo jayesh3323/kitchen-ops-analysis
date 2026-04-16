@@ -455,21 +455,12 @@ class NoodleRotationPipeline:
             return frame
 
     def crop_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Crop frame to the ROI region with surrounding context."""
+        """Crop frame tightly to the ROI region."""
         if self.roi is None:
             return frame
 
-        h, w = frame.shape[:2]
         x1, y1, x2, y2 = self.roi
-        bw = x2 - x1
-        bh = y2 - y1
-
-        cx1 = max(0, x1 - bw // 2)
-        cx2 = min(w, x2 + bw // 2)
-        cy1 = max(0, y1 - bh)
-        cy2 = min(h, y2 + bh)
-
-        return frame[cy1:cy2, cx1:cx2]
+        return frame[y1:y2, x1:x2]
 
     _MAX_UPSCALED_LONG_EDGE = 1920
 
@@ -558,7 +549,8 @@ class NoodleRotationPipeline:
             current_time = frame_count / video_fps
 
             if current_time >= next_extract_time:
-                prepared = self.prepare_frame_for_analysis(frame)
+                rotated = self.rotate_frame(frame)
+                prepared = self.prepare_frame_for_analysis(rotated)
                 if self.config.optical_flow_overlay:
                     prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
                 base64_frame = self._compress_frame(prepared, max_long_edge=self.config.phase1_max_long_edge)
@@ -600,7 +592,8 @@ class NoodleRotationPipeline:
             current_time = frame_count / video_fps
 
             if current_time >= next_extract_time:
-                prepared = self.prepare_frame_for_analysis(frame)
+                rotated = self.rotate_frame(frame)
+                prepared = self.prepare_frame_for_analysis(rotated)
                 if self.config.optical_flow_overlay:
                     prepared, prev_gray_for_flow = apply_optical_flow_overlay(prepared, prev_gray_for_flow)
                 base64_frame = self._compress_frame(prepared, format_override=self.config.phase2_image_format)
