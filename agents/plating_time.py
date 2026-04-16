@@ -65,6 +65,7 @@ AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
 AGENT_IMAGE_INTERPOLATION     = "LANCZOS"
 AGENT_ENABLE_CROPPING         = False   # plating table is a wide area — show full frame with ROI box
 AGENT_ROTATION_ANGLE          = 0
+AGENT_OPTICAL_FLOW_OVERLAY    = True
 
 # ============================================================================
 # ⚙️ RUNTIME CONFIGURATION (env vars can override agent defaults above)

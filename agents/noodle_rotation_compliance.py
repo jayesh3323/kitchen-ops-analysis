@@ -58,13 +58,14 @@ AGENT_CLIP_BUFFER_SECONDS     = 3
 AGENT_MAX_FRAMES_PER_BATCH    = 300
 AGENT_BATCH_OVERLAP_FRAMES    = 5
 AGENT_IMAGE_QUALITY           = 95
-AGENT_IMAGE_UPSCALE_FACTOR    = 1.0
+AGENT_IMAGE_UPSCALE_FACTOR    = 2.0
 AGENT_IMAGE_TARGET_RESOLUTION = "auto"
 AGENT_IMAGE_FORMAT            = "PNG"
 AGENT_PHASE2_IMAGE_FORMAT     = "PNG"
 AGENT_IMAGE_INTERPOLATION     = "CUBIC"
 AGENT_ENABLE_CROPPING         = True
 AGENT_ROTATION_ANGLE          = 0
+AGENT_OPTICAL_FLOW_OVERLAY    = True
 
 # ============================================================================
 # ⚙️ RUNTIME CONFIGURATION (env vars can override agent defaults above)
