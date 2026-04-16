@@ -379,8 +379,10 @@ async def get_job(job_id: str):
         if agent_name == "bowl_completion_rate":
             return True
         if agent_name == "noodle_rotation":
-            threshold = 0.8  
-        elif agent_name == "pork_weighing_compliance":
+            # Noodle: only require confidence threshold; verified_reading stores total
+            # strokes which can legitimately be 0, so don't gate on it being non-None.
+            return (r.get("confidence") or 0) >= 0.5
+        if agent_name == "pork_weighing_compliance":
             threshold = 0.1
         else:
             threshold = 0.80

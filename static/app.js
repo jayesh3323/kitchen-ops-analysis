@@ -1320,17 +1320,12 @@ async function renderResultsPanel(job) {
                 ${framesHtml}
             </div>`;
         } else if (agent === 'noodle_rotation') {
-            //const verifiedCount = r.verified_reading ?? r.scale ?? '—';
-            const phase1Count = r.scale ?? '—';
+            const totalRotations = r.verified_reading ?? r.scale ?? '—';
             const durationSec = (r.end_time && r.start_time) ? (r.end_time - r.start_time) : null;
             const duration = durationSec != null ? `${durationSec.toFixed(1)}s` : '—';
             const p2on = job.phase2_enabled !== false;
-            const countColor = 'var(--accent-cyan)';
-            // Prefer real HH:MM:SS timestamps; fall back to raw seconds
-            const startHms = r.real_timestamp || secondsToHms(r.start_time || 0);
-            const endHms = r.real_timestamp
-                ? addSecondsToHms(r.real_timestamp, durationSec != null ? durationSec : 0)
-                : secondsToHms(r.end_time || 0);
+            const countColor = totalRotations !== '—' && Number(totalRotations) >= 10
+                ? 'var(--accent-green)' : 'var(--accent-amber)';
             return `<div class="detection-card">
                 <div class="detection-header">
                     <span class="detection-id">Event #${r.event_id}</span>
@@ -1340,8 +1335,7 @@ async function renderResultsPanel(job) {
                     <div class="detail-item"><span class="detail-label">Start Time</span><span class="detail-value" style="font-family:monospace;">${r.real_timestamp || (job.recording_hour != null ? computeRealHms(r.start_time, job.recording_hour) : secondsToHms(r.start_time || 0))}</span></div>
                     <div class="detail-item"><span class="detail-label">End Time</span><span class="detail-value" style="font-family:monospace;">${r.real_timestamp ? addSecondsToHms(r.real_timestamp, durationSec != null ? durationSec : 0) : (job.recording_hour != null ? computeRealHms(r.end_time, job.recording_hour) : secondsToHms(r.end_time || 0))}</span></div>
                     <div class="detail-item"><span class="detail-label">Duration</span><span class="detail-value">${duration}</span></div>
-                    <div class="detail-item"><span class="detail-label">${p2on ? 'Verified Count' : 'Transfer Count'}</span><span class="detail-value" style="font-weight:700;color:${countColor};">${verifiedCount}</span></div>
-                    ${p2on ? `<div class="detail-item"><span class="detail-label">Initial Count</span><span class="detail-value">${phase1Count}</span></div>` : ''}
+                    <div class="detail-item"><span class="detail-label">Total Rotations</span><span class="detail-value" style="font-weight:700;color:${countColor};">${totalRotations !== '—' ? `${totalRotations} ${r.unit || 'rotations'}` : '—'}</span></div>
                 </div>
                 ${r.description ? `<div style="margin-top:0.5rem;font-size:0.82rem;color:var(--text-secondary);">${escapeHtml(r.description)}</div>` : ''}
                 ${framesHtml}
