@@ -3,7 +3,7 @@ motion_utils.py — Motion utilities for VLM frame pre-processing.
 
 Contains:
   - compute_batch_mafd(): MAFD pre-screening to skip idle batches before LLM calls
-  - apply_optical_flow_overlay(): Farneback dense flow HSV colour overlay for
+  - apply_optical_flow_overlay(): Farneback dense flow with HSV tint + arrow grid for
     explicit motion-direction cues visible to the VLM
 
 Optical flow overlay usage in each agent's extract_frames() loop:
@@ -109,31 +109,35 @@ def compute_batch_mafd(
 def apply_optical_flow_overlay(
     frame_bgr: "np.ndarray",
     prev_gray: Optional["np.ndarray"],
-    alpha: float = 0.45,
+    alpha: float = 0.35,
+    arrow_step: int = 20,
+    arrow_scale: float = 3.0,
 ) -> Tuple["np.ndarray", "np.ndarray"]:
     """
     Compute Farneback dense optical flow between *prev_gray* and *frame_bgr*,
-    encode motion direction as HSV hue and magnitude as value, then alpha-blend
-    the resulting colour map onto *frame_bgr*.
+    then draw two layers of motion direction cues onto the frame:
 
-    The blended frame gives the VLM explicit colour-coded arrows so it can read
-    rotation direction (e.g. clockwise noodle stirring → consistent hue swirl).
+    Layer 1 — HSV colour tint (subtle background context):
+      - Hue   → flow direction (0-360 deg mapped to 0-180 in OpenCV HSV)
+      - Value → normalised magnitude
+      - Alpha-blended at *alpha* (default 0.35)
 
-    HSV encoding:
-      - Hue   → flow direction (0–360° mapped to 0–180 in OpenCV HSV)
-      - Saturation → 255 (full)
-      - Value → normalised magnitude (0 = no motion, 255 = peak motion)
+    Layer 2 — Sparse arrow grid (explicit directional cues readable by VLM):
+      - Yellow arrows (black outline for contrast) every *arrow_step* pixels
+      - Arrow direction = flow vector at that grid point
+      - Arrow length proportional to local magnitude, capped to avoid overlap
+      - Arrows drawn only where local magnitude > 10% of peak magnitude
 
     Args:
-        frame_bgr:  Current frame as a BGR numpy array (HxWx3, uint8).
-        prev_gray:  Grayscale previous frame (HxW, uint8), or None for the
-                    first frame (overlay is skipped; original returned as-is).
-        alpha:      Blend weight for the flow layer [0, 1].  0.45 keeps the
-                    original detail clearly visible while making motion readable.
+        frame_bgr:   Current frame as BGR numpy array (HxWx3, uint8).
+        prev_gray:   Grayscale previous frame (HxW, uint8), or None for the
+                     first frame (overlay skipped; original returned unchanged).
+        alpha:       Blend weight for HSV colour layer [0, 1].
+        arrow_step:  Grid spacing in pixels between drawn arrows.
+        arrow_scale: Multiplier on the flow vector length for arrow rendering.
 
     Returns:
-        (overlaid_bgr, curr_gray) — blended frame and the current grayscale
-        frame ready to pass as *prev_gray* on the next call.
+        (overlaid_bgr, curr_gray)
     """
     try:
         import cv2
@@ -163,13 +167,37 @@ def apply_optical_flow_overlay(
             # Essentially no motion — skip overlay so frame stays unmodified.
             return frame_bgr, curr_gray
 
+        # --- Layer 1: HSV colour tint ---
         hsv = np.zeros_like(frame_bgr)
-        hsv[..., 1] = 255                                                    # full saturation
-        hsv[..., 0] = (ang * 180.0 / np.pi / 2.0).astype(np.uint8)         # direction → hue
-        hsv[..., 2] = np.clip(mag / max_mag * 255.0, 0, 255).astype(np.uint8)  # magnitude → value
-
+        hsv[..., 1] = 255                                                        # full saturation
+        hsv[..., 0] = (ang * 180.0 / np.pi / 2.0).astype(np.uint8)             # direction -> hue
+        hsv[..., 2] = np.clip(mag / max_mag * 255.0, 0, 255).astype(np.uint8)  # magnitude -> value
         flow_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         blended = cv2.addWeighted(frame_bgr, 1.0 - alpha, flow_bgr, alpha, 0)
+
+        # --- Layer 2: Arrow grid ---
+        h, w = frame_bgr.shape[:2]
+        mag_threshold = max_mag * 0.10      # skip arrows where motion is negligible
+        max_arrow_len = arrow_step * 1.8    # cap length to avoid overlap
+
+        for y in range(arrow_step, h - arrow_step // 2, arrow_step):
+            for x in range(arrow_step, w - arrow_step // 2, arrow_step):
+                m = float(mag[y, x])
+                if m < mag_threshold:
+                    continue
+                fx, fy = float(flow[y, x, 0]), float(flow[y, x, 1])
+                length = (fx * fx + fy * fy) ** 0.5
+                if length < 1e-3:
+                    continue
+                scale = min(arrow_scale * m / max_mag * arrow_step, max_arrow_len)
+                ex = int(round(x + (fx / length) * scale))
+                ey = int(round(y + (fy / length) * scale))
+                ex = max(0, min(w - 1, ex))
+                ey = max(0, min(h - 1, ey))
+                # Black outline then yellow arrow for visibility on any background
+                cv2.arrowedLine(blended, (x, y), (ex, ey), (0, 0, 0), 2, tipLength=0.35)
+                cv2.arrowedLine(blended, (x, y), (ex, ey), (0, 230, 255), 1, tipLength=0.35)
+
         return blended, curr_gray
 
     except Exception as exc:
