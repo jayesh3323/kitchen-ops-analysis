@@ -57,7 +57,7 @@ load_dotenv()
 # ============================================================================
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
-AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
+AGENT_PHASE2_MODEL_NAME       = "gemini-3-flash-preview"
 AGENT_FPS                     = 1.0
 AGENT_CONFIDENCE_THRESHOLD    = 0.8
 AGENT_MAX_BATCH_SIZE_MB       = 35.0
@@ -264,6 +264,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION
     phase1_max_long_edge: int = PHASE1_MAX_LONG_EDGE
     motion_threshold: float = 0.0
+    optical_flow_overlay: bool = False
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None

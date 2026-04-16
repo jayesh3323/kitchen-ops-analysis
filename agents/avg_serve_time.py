@@ -48,7 +48,7 @@ load_dotenv()
 # ============================================================================
 
 AGENT_PHASE1_MODEL_NAME       = "gpt-5-mini"
-AGENT_PHASE2_MODEL_NAME       = "gemini-2.5-pro"
+AGENT_PHASE2_MODEL_NAME       = "gemini-3-flash-preview"
 AGENT_FPS                     = 1.0
 AGENT_CONFIDENCE_THRESHOLD    = 0.7
 AGENT_MAX_BATCH_SIZE_MB       = 35.0
@@ -310,6 +310,7 @@ class PipelineConfig:
     image_interpolation: str = IMAGE_INTERPOLATION  # "LANCZOS" or "CUBIC"
     phase1_max_long_edge: int = PHASE1_MAX_LONG_EDGE
     motion_threshold: float = 0.0
+    optical_flow_overlay: bool = False
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
@@ -319,12 +320,12 @@ class PipelineConfig:
             self.openai_api_key = OPENAI_API_KEY
         if self.google_api_key is None:
             self.google_api_key = GOOGLE_API_KEY
-            
+
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY must be set in .env or environment variables")
         if not self.google_api_key and self.enable_phase2:
             logger.warning("GOOGLE_API_KEY is missing in .env! Phase 2 with Gemini will fail.")
-        
+
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
 

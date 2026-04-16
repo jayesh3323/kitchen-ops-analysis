@@ -424,6 +424,7 @@ class PipelineConfig:
     png_compression: int = PNG_COMPRESSION
     phase2_png_compression: int = PHASE2_PNG_COMPRESSION
     motion_threshold: float = 0.0
+    optical_flow_overlay: bool = False
     openai_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     roi: Optional[Tuple[int, int, int, int]] = None
