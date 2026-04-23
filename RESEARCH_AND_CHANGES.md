@@ -17,7 +17,7 @@
 | I7 | Few-shot reference images in Phase 1 prompts | `All 5 agents` | **Few-shot reference images in Phase 1 prompts** — 2–3 annotated JPEG crops per agent inline as base64. +15–25% accuracy; saturates at 3 examples | ✅ Working |
 | I8 | Real-ESRGAN super-resolution on digit sub-crop |	`pork_weighing_compliance.py` |	Applied 4× Real-ESRGAN SR on a tight sub-crop around each detected scale display (1.5× padded bounding box from display_circles), then Lanczos-downsampled the SR output back to the original patch size before pasting in-place. |	✅ Working | 
 | I9 | Optical Flow Color Overlay | `agents/noodle_rotation_compliance.py` | Calculates optical flow between two consecutive frames using Farneback method. Converts the motion into colored overlay (using HSV colors) and blends it on top of the original video frame. This helps the VLM clearly see the direction and speed of movement. | ❌ Failed | 
-| I10 | Phase 2 model change | `All 5 agents` | Evaluated performance of Gemini-3-Flash model specifically for Phase 2 analysis tasks. |  |
+| I10 | Phase 2 model change | `All 5 agents` | Evaluated performance of Gemini-3-Flash model specifically for Phase 2 analysis tasks. | ✅ Working   |
 
 ---
 
@@ -48,7 +48,7 @@ Changes to prompting strategy, model selection, sampling, or multi-pass logic.
 | C1 | **Lower confidence thresholds** (safe after voting active): pork 0.60→0.50, plating 0.70→0.55, serve 0.70→0.55, noodle 0.80→0.65, bowl 0.80→0.65 | Internal analysis + B1 voting paper | Recover real events currently filtered out; false-positive protection handled by voting | All 5 | Implemented | Works well for pork weighing task |
 | C2 | **Few-shot reference images in Phase 1 prompts** — 2–3 annotated JPEG crops per agent inline as base64 | [NeurIPS 2024](https://proceedings.neurips.cc/paper_files/paper/2024/file/22b2067b8f680812624032025864c5a1-Paper-Datasets_and_Benchmarks_Track.pdf) | +15–25% accuracy; saturates at 3 examples (1 clear positive, 1 partial/occluded, 1 low-light) | All 5 | Implemented | ✅ Working |
 | D1 | **JSON schema enforcement** — pass `response_format={"type":"json_schema",...}` to GPT; `response_schema` to Gemini | OpenAI + Google API docs | Eliminates parse failures; ~5% retry token reduction | All 5 | Not implemented | |
-| D2 | **Motion-based chunk pre-screening** — mean absolute frame-diff within ROI per chunk; skip if below threshold | [DyToK arXiv 2512.06866] | 30–50% fewer Phase 1 API calls on idle periods | All 5 | Not implemented | |
+| D2 | **Motion-based chunk pre-screening** — mean absolute frame-diff within ROI per chunk; skip if below threshold | [DyToK arXiv 2512.06866] | 30–50% fewer Phase 1 API calls on idle periods | All 5 | Implemented | ✅ Working |
 
 ---
 
@@ -56,9 +56,9 @@ Changes to prompting strategy, model selection, sampling, or multi-pass logic.
 
 | # | Fix | File | Description | Status |
 |---|-----|------|-------------|--------|
-| F1 | Eliminate 30s job pickup lag | `worker.py` | Replace `time.sleep(30)` with `job_cache.wait_for_queued(timeout=30)` | Not implemented |
-| F2 | Path traversal security fix | `main.py` | Validate `video_path` is inside `UPLOAD_DIR` before `os.path.exists()` | Not implemented |
-| F3 | File type validation on upload | `main.py` | Reject non-video extensions (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`) | Not implemented |
-| F4 | Config validation at startup | `config.py` | Fail fast if `OPENAI_API_KEY`/`GOOGLE_API_KEY` missing or `FPS <= 0` | Not implemented |
-| F5 | Push confidence filter to DB query | `main.py`, `database.py` | Add `WHERE confidence >= threshold` to SQL instead of filtering in Python | Not implemented |
-| F6 | Job cancellation endpoint | `main.py`, `worker.py` | `POST /api/jobs/{id}/cancel`; sets cancel flag checked in progress callback | Not implemented |
+| F1 | Eliminate 30s job pickup lag | `worker.py` | Replace `time.sleep(30)` with `job_cache.wait_for_queued(timeout=30)` | Implemented |
+| F2 | Path traversal security fix | `main.py` | Validate `video_path` is inside `UPLOAD_DIR` before `os.path.exists()` | Implemented |
+| F3 | File type validation on upload | `main.py` | Reject non-video extensions (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`) | Implemented |
+| F4 | Config validation at startup | `config.py` | Fail fast if `OPENAI_API_KEY`/`GOOGLE_API_KEY` missing or `FPS <= 0` | Implemented |
+| F5 | Push confidence filter to DB query | `main.py`, `database.py` | Add `WHERE confidence >= threshold` to SQL instead of filtering in Python | Implemented |
+| F6 | Job cancellation endpoint | `main.py`, `worker.py` | `POST /api/jobs/{id}/cancel`; sets cancel flag checked in progress callback | Implemented |
